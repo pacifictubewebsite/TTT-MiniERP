@@ -160,7 +160,7 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (อัปเดต: เวลาเข้า-ออก + คู่แข่ง)
+# 1. SALE REPORT (Fix: แก้ไข Error "now is not defined" + จัดการเวลา)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     if 'edit_mode' not in st.session_state:
@@ -180,21 +180,24 @@ def render_sale_report():
         default_cust = st.session_state['edit_data'].get('customer_name', "") if st.session_state['edit_mode'] else ""
         cust_name = c2.text_input("ชื่อลูกค้า / บริษัท", value=default_cust)
         
-        # 🟢 ส่วนที่เพิ่มใหม่ 1: เวลาเข้า-ออก
+        # 🟢 จุดที่แก้: ประกาศตัวแปร now ก่อนเรียกใช้ (ตัดวินาทีทิ้งด้วย)
+        now = datetime.datetime.now().replace(second=0, microsecond=0)
+
         t1, t2, t3 = st.columns(3)
         date_visit = t1.date_input("วันที่", datetime.date.today())
-        time_in = t2.time_input("เวลาเข้า (Check-in)", datetime.datetime.now().time())
-        time_out = t3.time_input("เวลาออก (Check-out)", datetime.datetime.now().time())
+        
+        # ใช้ตัวแปร now ที่ประกาศไว้บรรทัดบน
+        time_in = t2.time_input("เวลาเข้า (Check-in)", value=now.time()) 
+        time_out = t3.time_input("เวลาออก (Check-out)", value=now.time())
 
         # ส่วนวัตถุประสงค์
         obj_options = ["1.เข้าพบ/เยี่ยมลูกค้า", "2.เสนอขายสินค้า", "3.วางบิลเก็บเช็ค", "4.แก้ปัญหา", "5.อื่นๆ"]
         selected_objs = st.multiselect("วัตถุประสงค์", obj_options)
         
-        # 🟢 ส่วนที่เพิ่มใหม่ 2: ข้อมูลคู่แข่ง (Competitor)
+        # ส่วนข้อมูลคู่แข่ง
         st.write("---")
         st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด (ถ้ามี)**")
         
-        # ดึงรายชื่อคู่แข่งเก่ามาโชว์
         df_comp = get_data("Competitors")
         comp_list = df_comp['name'].tolist() if not df_comp.empty else []
         comp_list.insert(0, "- ไม่ระบุ -")
@@ -232,7 +235,6 @@ def render_sale_report():
             if st.button("💾 บันทึกการแก้ไข", type="primary"):
                 current_edit_count = int(st.session_state['edit_data'].get('edit_count', 0)) + 1
                 final_obj = ", ".join(selected_objs)
-                # Note: Edit Mode ยังไม่ได้รองรับการแก้ข้อมูลคู่แข่ง (เพื่อไม่ให้ Code ซับซ้อนเกินไป)
                 run_query("update_sale_report", doc_no=default_doc, cust=cust_name, obj=final_obj, prob=problem, rem=remark, edit_count=current_edit_count)
                 log_row = [default_doc, current_edit_count, st.session_state['user_name'], str(datetime.datetime.now()), f"Edit: {remark}"]
                 append_data("Sale_Report_Logs", log_row)
@@ -248,9 +250,7 @@ def render_sale_report():
         else:
             if st.button("💾 บันทึกรายงานใหม่", type="primary"):
                 if cust_name:
-                    # Logic เพิ่มคู่แข่งใหม่ลง Database อัตโนมัติ
                     if selected_comp == "➕ เพิ่มรายชื่อใหม่..." and final_comp_name:
-                         # เช็คว่าชื่อซ้ำไหม
                         if final_comp_name not in comp_list:
                             append_data("Competitors", [final_comp_name])
                     
@@ -262,12 +262,13 @@ def render_sale_report():
                         saved_path = os.path.join(UPLOAD_FOLDER, fname)
                         with open(saved_path, "wb") as f: f.write(img_file.getbuffer())
 
-                    # 🟢 บันทึกลง Sheet (เพิ่มคอลัมน์ใหม่ต่อท้าย)
-                    # ลำดับ: doc_no, date, sales, cust, obj, prob, remark, img, edit_count, timestamp, TIME_IN, TIME_OUT, COMP_NAME, COMP_PROD, COMP_PRICE
+                    # 🟢 จุดที่แก้: แปลงเวลาเป็น String แบบสวยๆ (HH:MM) ก่อนบันทึก
                     row = [
                         default_doc, str(date_visit), sales_name, cust_name, final_obj, 
                         problem, remark, saved_path, 0, str(datetime.datetime.now()),
-                        str(time_in), str(time_out), final_comp_name, comp_product, comp_price
+                        time_in.strftime("%H:%M"), 
+                        time_out.strftime("%H:%M"), 
+                        final_comp_name, comp_product, comp_price
                     ]
                     append_data("Sale_Reports", row)
                     st.success(f"✅ บันทึกสำเร็จ: {default_doc}")
@@ -293,13 +294,12 @@ def render_sale_report():
                 with col_a:
                     with st.expander(f"📄 {row['doc_no']} | {row['customer_name']} {edit_info}"):
                         st.write(f"**วันที่:** {row['date']}")
-                        # โชว์เวลาเข้าออก
+                        # โชว์เวลา
                         if 'time_in' in row and row['time_in']:
                             st.write(f"🕒 **เวลา:** {row['time_in']} - {row['time_out']}")
                         
                         st.write(f"**วัตถุประสงค์:** {row['objective']}")
                         
-                        # โชว์ข้อมูลคู่แข่ง
                         if 'comp_name' in row and row['comp_name']:
                             st.info(f"🕵️ **คู่แข่ง:** {row['comp_name']} | สินค้า: {row['comp_product']} | ราคา: {row['comp_price']}")
 

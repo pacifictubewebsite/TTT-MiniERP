@@ -9,10 +9,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 # ==========================================
 # ⚙️ CONFIG & SECURITY
 # ==========================================
-# 🟢 ตั้งค่า initial_sidebar_state="expanded" เพื่อให้เมนูพยายามกางออก
 st.set_page_config(layout="wide", page_title="TTT Mini ERP", initial_sidebar_state="expanded")
 
-# 🟢 แก้ไขตรงนี้: ลบ 'header {visibility: hidden;}' ออก เพื่อให้ปุ่มเปิดเมนูไม่หาย
 st.markdown("""<style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
@@ -24,7 +22,7 @@ UPLOAD_FOLDER = "report_images"
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# 🔐 ข้อมูลผู้ใช้งาน
+# 🔐 ข้อมูลผู้ใช้งาน (อัปเดตล่าสุด)
 USERS = {
     "kitibodee": {"pass": "Qaqcpti67", "role": "Admin", "name": "Kitibodee"},
     "jitpanu": {"pass": "Jitpanu2026", "role": "GM", "name": "Jitpanu"},
@@ -47,19 +45,13 @@ USERS = {
 def get_gsheet_client():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
-        # อ่านจาก Secrets (Cloud)
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
-            
-            # แปลง private_key กลับให้ถูกต้อง (แก้ปัญหา \n)
             if "private_key" in creds_dict:
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-            
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         else:
-            # อ่านจากไฟล์ (Localhost)
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
-            
         client = gspread.authorize(creds)
         return client
     except Exception as e:
@@ -100,6 +92,7 @@ def run_query(query_type, **kwargs):
         wks.update_cell(cell.row, col_status, kwargs['status'])
 
     elif query_type == "update_sale_report":
+        # Note: การแก้ไขรายงานเก่ายังไม่ได้ทำส่วนคู่แข่งเพิ่ม (เพื่อความง่ายของ Code)
         wks = sh.worksheet("Sale_Reports")
         cell = wks.find(kwargs['doc_no'])
         if cell:
@@ -124,13 +117,11 @@ def generate_doc_no():
     
     current_month_docs = df[df['doc_no'].astype(str).str.startswith(prefix)]
     if current_month_docs.empty: return f"{prefix}001"
-    
     try:
         last_doc = current_month_docs['doc_no'].iloc[-1]
         last_run_no = int(last_doc.split("-")[-1])
         new_run_no = last_run_no + 1
     except: new_run_no = 1
-        
     return f"{prefix}{new_run_no:03d}"
 
 # ==========================================
@@ -149,7 +140,6 @@ def check_password():
             st.title("🔐 TTT Login Portal")
             username = st.text_input("Username").lower()
             password = st.text_input("Password", type="password")
-            
             if st.button("Login", type="primary", use_container_width=True):
                 if username in USERS and USERS[username]['pass'] == password:
                     st.session_state['logged_in'] = True
@@ -170,7 +160,7 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT
+# 1. SALE REPORT (อัปเดต: เวลาเข้า-ออก + คู่แข่ง)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     if 'edit_mode' not in st.session_state:
@@ -190,31 +180,59 @@ def render_sale_report():
         default_cust = st.session_state['edit_data'].get('customer_name', "") if st.session_state['edit_mode'] else ""
         cust_name = c2.text_input("ชื่อลูกค้า / บริษัท", value=default_cust)
         
-        c3, c4 = st.columns(2)
-        date_visit = c3.date_input("วันที่", datetime.date.today())
+        # 🟢 ส่วนที่เพิ่มใหม่ 1: เวลาเข้า-ออก
+        t1, t2, t3 = st.columns(3)
+        date_visit = t1.date_input("วันที่", datetime.date.today())
+        time_in = t2.time_input("เวลาเข้า (Check-in)", datetime.datetime.now().time())
+        time_out = t3.time_input("เวลาออก (Check-out)", datetime.datetime.now().time())
+
+        # ส่วนวัตถุประสงค์
         obj_options = ["1.เข้าพบ/เยี่ยมลูกค้า", "2.เสนอขายสินค้า", "3.วางบิลเก็บเช็ค", "4.แก้ปัญหา", "5.อื่นๆ"]
-        selected_objs = c4.multiselect("วัตถุประสงค์", obj_options)
+        selected_objs = st.multiselect("วัตถุประสงค์", obj_options)
+        
+        # 🟢 ส่วนที่เพิ่มใหม่ 2: ข้อมูลคู่แข่ง (Competitor)
+        st.write("---")
+        st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด (ถ้ามี)**")
+        
+        # ดึงรายชื่อคู่แข่งเก่ามาโชว์
+        df_comp = get_data("Competitors")
+        comp_list = df_comp['name'].tolist() if not df_comp.empty else []
+        comp_list.insert(0, "- ไม่ระบุ -")
+        comp_list.append("➕ เพิ่มรายชื่อใหม่...")
+        
+        col_comp1, col_comp2, col_comp3 = st.columns(3)
+        selected_comp = col_comp1.selectbox("ชื่อคู่แข่ง", comp_list)
+        
+        final_comp_name = ""
+        if selected_comp == "➕ เพิ่มรายชื่อใหม่...":
+            final_comp_name = col_comp1.text_input("ระบุชื่อคู่แข่งใหม่", placeholder="เช่น BPฟ้า")
+        elif selected_comp != "- ไม่ระบุ -":
+            final_comp_name = selected_comp
+            
+        comp_product = col_comp2.text_input("สินค้าคู่แข่ง", placeholder="เช่น ท่อ 3 นิ้ว")
+        comp_price = col_comp3.number_input("ราคาที่ลูกค้าซื้อเข้า", min_value=0.0, step=0.1)
+
+        st.write("---")
         
         default_prob = st.session_state['edit_data'].get('problem', "") if st.session_state['edit_mode'] else ""
         problem = st.text_area("ปัญหา/Feedback", value=default_prob)
         default_rem = st.session_state['edit_data'].get('remark', "") if st.session_state['edit_mode'] else ""
         remark = st.text_input("หมายเหตุ", value=default_rem)
         
-        st.write("---")
-        st.write("📸 **รูปภาพหน้างาน**")
         img_method = st.radio("เลือกวิธีแนบรูป:", ["🚫 ไม่แนบ", "📸 เปิดกล้อง (Camera)", "📂 อัปโหลดไฟล์ (Upload)"], horizontal=True)
-        
         img_file = None
         if img_method == "📸 เปิดกล้อง (Camera)":
             img_file = st.camera_input("ถ่ายรูป")
         elif img_method == "📂 อัปโหลดไฟล์ (Upload)":
             img_file = st.file_uploader("เลือกรูปจากเครื่อง", type=['jpg', 'png', 'jpeg'])
+        
         st.write("---")
         
         if st.session_state['edit_mode']:
             if st.button("💾 บันทึกการแก้ไข", type="primary"):
                 current_edit_count = int(st.session_state['edit_data'].get('edit_count', 0)) + 1
                 final_obj = ", ".join(selected_objs)
+                # Note: Edit Mode ยังไม่ได้รองรับการแก้ข้อมูลคู่แข่ง (เพื่อไม่ให้ Code ซับซ้อนเกินไป)
                 run_query("update_sale_report", doc_no=default_doc, cust=cust_name, obj=final_obj, prob=problem, rem=remark, edit_count=current_edit_count)
                 log_row = [default_doc, current_edit_count, st.session_state['user_name'], str(datetime.datetime.now()), f"Edit: {remark}"]
                 append_data("Sale_Report_Logs", log_row)
@@ -230,6 +248,12 @@ def render_sale_report():
         else:
             if st.button("💾 บันทึกรายงานใหม่", type="primary"):
                 if cust_name:
+                    # Logic เพิ่มคู่แข่งใหม่ลง Database อัตโนมัติ
+                    if selected_comp == "➕ เพิ่มรายชื่อใหม่..." and final_comp_name:
+                         # เช็คว่าชื่อซ้ำไหม
+                        if final_comp_name not in comp_list:
+                            append_data("Competitors", [final_comp_name])
+                    
                     final_obj = ", ".join(selected_objs)
                     saved_path = ""
                     if img_file:
@@ -237,7 +261,14 @@ def render_sale_report():
                         fname = f"IMG_{ts}.jpg"
                         saved_path = os.path.join(UPLOAD_FOLDER, fname)
                         with open(saved_path, "wb") as f: f.write(img_file.getbuffer())
-                    row = [default_doc, str(date_visit), sales_name, cust_name, final_obj, problem, remark, saved_path, 0, str(datetime.datetime.now())]
+
+                    # 🟢 บันทึกลง Sheet (เพิ่มคอลัมน์ใหม่ต่อท้าย)
+                    # ลำดับ: doc_no, date, sales, cust, obj, prob, remark, img, edit_count, timestamp, TIME_IN, TIME_OUT, COMP_NAME, COMP_PROD, COMP_PRICE
+                    row = [
+                        default_doc, str(date_visit), sales_name, cust_name, final_obj, 
+                        problem, remark, saved_path, 0, str(datetime.datetime.now()),
+                        str(time_in), str(time_out), final_comp_name, comp_product, comp_price
+                    ]
                     append_data("Sale_Reports", row)
                     st.success(f"✅ บันทึกสำเร็จ: {default_doc}")
                     time.sleep(1)
@@ -262,8 +293,16 @@ def render_sale_report():
                 with col_a:
                     with st.expander(f"📄 {row['doc_no']} | {row['customer_name']} {edit_info}"):
                         st.write(f"**วันที่:** {row['date']}")
-                        st.write(f"**เซลล์:** {row['sales_person']}")
+                        # โชว์เวลาเข้าออก
+                        if 'time_in' in row and row['time_in']:
+                            st.write(f"🕒 **เวลา:** {row['time_in']} - {row['time_out']}")
+                        
                         st.write(f"**วัตถุประสงค์:** {row['objective']}")
+                        
+                        # โชว์ข้อมูลคู่แข่ง
+                        if 'comp_name' in row and row['comp_name']:
+                            st.info(f"🕵️ **คู่แข่ง:** {row['comp_name']} | สินค้า: {row['comp_product']} | ราคา: {row['comp_price']}")
+
                         st.write(f"**ปัญหา:** {row['problem']}")
                         st.write(f"**หมายเหตุ:** {row['remark']}")
                         if row['image_path'] and os.path.exists(row['image_path']):
@@ -275,7 +314,7 @@ def render_sale_report():
                             st.session_state['edit_data'] = row.to_dict()
                             st.rerun()
 
-# 2. STOCK & ORDER
+# 2. STOCK & ORDER (อัปเดต: ดูประวัติลูกค้าได้)
 def render_stock_order():
     st.header("🛒 Check Stock & Open Order")
     df = get_data("Inventory")
@@ -307,7 +346,7 @@ def render_stock_order():
         df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], 
         column_config={
             "real_stock": "Stock", 
-            "reserved_qty": "tem reserved", 
+            "reserved_qty": "Item reserved", 
             "available": "Ready",
             "unit": "หน่วยนับ"
         },
@@ -320,7 +359,21 @@ def render_stock_order():
         st.subheader(f"เปิดบิล: {item['name']}")
         c1, c2 = st.columns(2)
         s_name = c1.text_input("เซลล์", value=st.session_state['user_name'], disabled=True)
-        c_name = c2.text_input("ลูกค้า")
+        c_name = c2.text_input("ลูกค้า (พิมพ์เพื่อดูประวัติ)")
+        
+        # 🟢 ส่วนที่เพิ่มใหม่: ดูประวัติการสั่งซื้อของลูกค้ารายนี้
+        if c_name and not df_ord.empty:
+            # กรองเฉพาะลูกค้าชื่อนี้
+            history = df_ord[df_ord['customer_name'].astype(str).str.contains(c_name, case=False)]
+            if not history.empty:
+                with st.expander(f"📜 ประวัติการสั่งซื้อของ '{c_name}' ({len(history)} รายการ)"):
+                    st.dataframe(
+                        history[['date', 'code', 'qty', 'status']], 
+                        hide_index=True, use_container_width=True
+                    )
+            else:
+                st.caption("ℹ️ ลูกค้าใหม่ ยังไม่มีประวัติการสั่งซื้อ")
+
         c3, c4 = st.columns(2)
         qty_label = f"จำนวน ({item['unit']})"
         qty = c3.number_input(qty_label, min_value=1)
@@ -384,10 +437,9 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (เอา Password ออกแล้ว)
+# 5. WH ADMIN
 def render_wh():
     st.header("🏭 Warehouse Management")
-    # 🔓 ไม่ต้องเช็ค Password แล้ว
     tab1, tab2 = st.tabs(["✏️ Adjust Stock", "📂 Upload Excel"])
     with tab1:
         df = get_data("Inventory")
@@ -496,4 +548,3 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
-

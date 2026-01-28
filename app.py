@@ -6,6 +6,12 @@ import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+# 🟢 เพิ่มการ import ไลบรารี GPS (ต้องใส่ใน requirements.txt ก่อนนะ)
+try:
+    from streamlit_js_eval import get_geolocation
+except ImportError:
+    st.error("⚠️ ยังไม่ได้ติดตั้ง 'streamlit-js-eval' ใน requirements.txt")
+
 # ==========================================
 # ⚙️ CONFIG & SECURITY
 # ==========================================
@@ -83,17 +89,12 @@ def run_query(query_type, **kwargs):
     if query_type == "update_stock":
         wks = sh.worksheet("Inventory")
         cell = wks.find(kwargs['code'])
-        # 1. อัปเดตจำนวนสต็อก (ทำทุกกรณี)
         wks.update_cell(cell.row, 4, kwargs['new_stock'])
-        # 2. อัปเดตหมายเหตุ (ทำเฉพาะตอนที่ "มีข้อมูลส่งมา" เท่านั้น)
         if 'remark' in kwargs:
             wks.update_cell(cell.row, 6, kwargs['remark'])
 
     elif query_type == "update_order_status":
         wks = sh.worksheet("Orders")
-        # ค้นหาด้วย ID (ตอนนี้เป็นเลข SO-XXX)
-        # ต้องระวัง: ถ้ามีหลายสินค้าใน 1 SO ระบบ find จะเจอแค่บรรทัดแรก
-        # ดังนั้นต้อง Loop หาให้ครบทุกบรรทัดที่เป็น SO นั้น
         cell_list = wks.findall(str(kwargs['oid']))
         col_status = 10
         for cell in cell_list:
@@ -111,9 +112,6 @@ def run_query(query_type, **kwargs):
             wks.update_cell(row, 9, kwargs['edit_count'])
             wks.update_cell(row, 10, str(datetime.datetime.now()))
 
-# ==========================================
-# 🔢 GENERATOR
-# ==========================================
 def generate_doc_no():
     today = datetime.date.today()
     yy = today.strftime("%y")
@@ -130,33 +128,22 @@ def generate_doc_no():
     except: new_run_no = 1
     return f"{prefix}{new_run_no:03d}"
 
-# 🟢 สร้างเลขที่เอกสาร SO (Sale Order)
 def generate_so_no():
     today = datetime.date.today()
     yy = today.strftime("%y")
     mm = today.strftime("%m")
-    prefix = f"SO-{yy}-{mm}-" # เปลี่ยน prefix เป็น SO
+    prefix = f"SO-{yy}-{mm}-"
     df = get_data("Orders")
     if df.empty: return f"{prefix}001"
-    
-    # กรองเอาเฉพาะคอลัมน์ id ที่ขึ้นต้นด้วย SO-
-    # (ป้องกัน Error จาก ID เก่าที่เป็นตัวเลข timestamp)
     so_ids = df[df['id'].astype(str).str.startswith(prefix, na=False)]
-    
     if so_ids.empty: return f"{prefix}001"
-    
     try:
-        # หาเลขล่าสุด (ต้องระวังถ้ามีหลายบรรทัดเลขเดียวกัน)
         last_doc = so_ids['id'].iloc[-1] 
         last_run_no = int(last_doc.split("-")[-1])
         new_run_no = last_run_no + 1
     except: new_run_no = 1
-    
     return f"{prefix}{new_run_no:03d}"
 
-# ==========================================
-# 🔐 AUTHENTICATION
-# ==========================================
 def check_password():
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
@@ -190,7 +177,7 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (Fix: Cascading Dropdown ยี่ห้อ -> สินค้า)
+# 1. SALE REPORT (Update: GPS Check-in)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     if 'edit_mode' not in st.session_state:
@@ -210,6 +197,34 @@ def render_sale_report():
         default_cust = st.session_state['edit_data'].get('customer_name', "") if st.session_state['edit_mode'] else ""
         cust_name = c2.text_input("ชื่อลูกค้า / บริษัท", value=default_cust)
         
+        # --- 📍 GPS SECTION (Check-in) ---
+        st.write("---")
+        st.write("📍 **Check-in ตำแหน่งปัจจุบัน**")
+        
+        # ตัวแปรเก็บค่า GPS
+        gps_lat = ""
+        gps_lon = ""
+        
+        # เรียกใช้ฟังก์ชัน GPS (ถ้ากดปุ่ม มันจะดึงค่ามา)
+        # หมายเหตุ: get_geolocation จะทำงานเมื่อหน้าเว็บโหลดหรือมีการกระตุ้น
+        loc = get_geolocation(component_key='get_gps')
+        
+        if loc and 'coords' in loc:
+            gps_lat = loc['coords']['latitude']
+            gps_lon = loc['coords']['longitude']
+            st.success(f"✅ จับสัญญาณ GPS สำเร็จ! ({gps_lat}, {gps_lon})")
+        else:
+            st.warning("⚠️ กำลังค้นหาตำแหน่ง... (กรุณากด 'Allow' ถ้าเบราว์เซอร์ถาม)")
+
+        # แสดงค่าในช่องที่แก้ไขไม่ได้ (Disabled)
+        g1, g2 = st.columns(2)
+        g1.text_input("Latitude", value=gps_lat, disabled=True)
+        g2.text_input("Longitude", value=gps_lon, disabled=True)
+        
+        st.caption("ℹ️ หากตำแหน่งไม่ขึ้น ให้รีเฟรชหน้าเว็บ หรือตรวจสอบการอนุญาต Location บนมือถือ")
+        st.write("---")
+        # -----------------------------------
+
         now = datetime.datetime.now().replace(second=0, microsecond=0)
         t1, t2, t3 = st.columns(3)
         date_visit = t1.date_input("วันที่", datetime.date.today())
@@ -219,58 +234,42 @@ def render_sale_report():
         obj_options = ["1.เข้าพบ/เยี่ยมลูกค้า", "2.เสนอขายสินค้า", "3.วางบิลเก็บเช็ค", "4.แก้ปัญหา", "5.อื่นๆ"]
         selected_objs = st.multiselect("วัตถุประสงค์", obj_options)
         
-        # 🟢 โซนข้อมูลคู่แข่ง (แบบฉลาด)
+        # ข้อมูลคู่แข่ง (Cascading)
         st.write("---")
         st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด**")
         
-        # 1. ดึงข้อมูลทั้งหมดมาก่อน
         df_comp = get_data("Competitor_Data")
-        
-        # เตรียม list ยี่ห้อ (Brand)
         if not df_comp.empty:
-            # ดึงเฉพาะยี่ห้อที่ไม่ซ้ำ
             brand_options = sorted(df_comp['brand'].unique().tolist())
         else:
             brand_options = []
-            
         brand_options.insert(0, "- ไม่ระบุ -")
         brand_options.append("➕ เพิ่มยี่ห้อใหม่...")
         
         col_comp1, col_comp2, col_comp3 = st.columns(3)
-        
-        # --- Dropdown 1: เลือกยี่ห้อ ---
-        # (Streamlit ค้นหาได้ในตัวอยู่แล้ว แค่พิมพ์ลงไป)
         selected_brand = col_comp1.selectbox("ยี่ห้อสินค้า (Brand)", brand_options, key="sel_brand_key")
-        
         final_brand = ""
-        # ถ้าเลือกเพิ่มใหม่
         if selected_brand == "➕ เพิ่มยี่ห้อใหม่...":
             final_brand = col_comp1.text_input("ระบุยี่ห้อใหม่", placeholder="เช่น ท่อไทยใจดี", key="txt_brand_new")
         elif selected_brand != "- ไม่ระบุ -":
             final_brand = selected_brand
 
-        # --- Dropdown 2: เลือกสินค้า (กรองตามยี่ห้อ) ---
         product_options = []
         if final_brand and final_brand not in ["➕ เพิ่มยี่ห้อใหม่...", "- ไม่ระบุ -"]:
-            # กรองสินค้าเฉพาะยี่ห้อที่เลือก
             if not df_comp.empty and 'product' in df_comp.columns:
                 filtered_df = df_comp[df_comp['brand'] == final_brand]
                 product_options = sorted(filtered_df['product'].unique().tolist())
-        
         product_options.insert(0, "- ไม่ระบุ -")
         product_options.append("➕ เพิ่มสินค้าใหม่...")
         
         selected_prod = col_comp2.selectbox("รุ่น/สินค้า (Product)", product_options, key="sel_prod_key")
-        
         final_prod = ""
         if selected_prod == "➕ เพิ่มสินค้าใหม่...":
             final_prod = col_comp2.text_input("ระบุสินค้าใหม่", placeholder="เช่น ท่อ 4 นิ้ว", key="txt_prod_new")
         elif selected_prod != "- ไม่ระบุ -":
             final_prod = selected_prod
 
-        # --- ราคา ---
         comp_price = col_comp3.number_input("ราคาที่ลูกค้าซื้อเข้า", min_value=0.0, step=0.1, key="num_price_key")
-
         st.write("---")
         
         default_prob = st.session_state['edit_data'].get('problem', "") if st.session_state['edit_mode'] else ""
@@ -287,11 +286,11 @@ def render_sale_report():
         
         st.write("---")
         
-        # --- ส่วนบันทึก (Save Logic) ---
         if st.session_state['edit_mode']:
             if st.button("💾 บันทึกการแก้ไข", type="primary"):
                 current_edit_count = int(st.session_state['edit_data'].get('edit_count', 0)) + 1
                 final_obj = ", ".join(selected_objs)
+                # Note: Edit mode doesn't update GPS for simplicity
                 run_query("update_sale_report", doc_no=default_doc, cust=cust_name, obj=final_obj, prob=problem, rem=remark, edit_count=current_edit_count)
                 log_row = [default_doc, current_edit_count, st.session_state['user_name'], str(datetime.datetime.now()), f"Edit: {remark}"]
                 append_data("Sale_Report_Logs", log_row)
@@ -307,17 +306,11 @@ def render_sale_report():
         else:
             if st.button("💾 บันทึกรายงานใหม่", type="primary"):
                 if cust_name:
-                    # 🟢 Logic: บันทึกยี่ห้อ/สินค้าคู่แข่งใหม่ ลงฐานข้อมูล (Competitor_Data)
                     if final_brand and final_prod:
-                        # เช็คว่าคู่นี้มีอยู่แล้วหรือยัง
                         is_exist = False
                         if not df_comp.empty:
-                            # เช็คคู่ brand + product
                             match = df_comp[(df_comp['brand'] == final_brand) & (df_comp['product'] == final_prod)]
-                            if not match.empty:
-                                is_exist = True
-                        
-                        # ถ้ายังไม่มี ให้บันทึกเพิ่ม
+                            if not match.empty: is_exist = True
                         if not is_exist:
                             append_data("Competitor_Data", [final_brand, final_prod])
 
@@ -329,23 +322,21 @@ def render_sale_report():
                         saved_path = os.path.join(UPLOAD_FOLDER, fname)
                         with open(saved_path, "wb") as f: f.write(img_file.getbuffer())
 
+                    # 🟢 บันทึก GPS ลง Database (Lat, Lon)
                     row = [
                         default_doc, str(date_visit), sales_name, cust_name, final_obj, 
                         problem, remark, saved_path, 0, str(datetime.datetime.now()),
                         time_in.strftime("%H:%M"), 
                         time_out.strftime("%H:%M"), 
-                        final_brand, final_prod, comp_price
+                        final_brand, final_prod, comp_price,
+                        str(gps_lat), str(gps_lon) # เพิ่ม 2 ช่องนี้
                     ]
                     append_data("Sale_Reports", row)
                     
                     st.success(f"✅ บันทึกสำเร็จ: {default_doc}")
-                    
-                    # ล้างค่า Key
                     keys_to_clear = ["sel_brand_key", "txt_brand_new", "sel_prod_key", "txt_prod_new", "num_price_key"]
                     for k in keys_to_clear:
-                        if k in st.session_state:
-                            del st.session_state[k]
-                            
+                        if k in st.session_state: del st.session_state[k]
                     time.sleep(1)
                     st.rerun()
                 else:
@@ -371,10 +362,14 @@ def render_sale_report():
                         if 'time_in' in row and row['time_in']:
                             st.write(f"🕒 **เวลา:** {row['time_in']} - {row['time_out']}")
                         
+                        # 🟢 โชว์พิกัด GPS (ถ้ามี)
+                        if 'lat' in row and row['lat'] and row['lat'] != "":
+                            st.info(f"📍 **Check-in:** {row['lat']}, {row['lon']}")
+                            st.link_button("🗺️ ดูแผนที่ Google Maps", f"https://www.google.com/maps/search/?api=1&query={row['lat']},{row['lon']}")
+
                         st.write(f"**วัตถุประสงค์:** {row['objective']}")
-                        # โชว์ข้อมูลที่ปรับแก้ใหม่ (ชื่อคอลัมน์ใน Report ยังใช้ชื่อเดิม comp_name, comp_product ได้เลย)
                         if 'comp_name' in row and row['comp_name']:
-                            st.info(f"🕵️ **คู่แข่ง:** {row['comp_name']} | สินค้า: {row['comp_product']} | ราคา: {row['comp_price']}")
+                            st.write(f"🕵️ **คู่แข่ง:** {row['comp_name']} | {row['comp_product']} | {row['comp_price']}")
                         st.write(f"**ปัญหา:** {row['problem']}")
                         st.write(f"**หมายเหตุ:** {row['remark']}")
                         if row['image_path'] and os.path.exists(row['image_path']):
@@ -386,126 +381,80 @@ def render_sale_report():
                             st.session_state['edit_data'] = row.to_dict()
                             st.rerun()
 
-# 2. STOCK & ORDER (Fix: ป้องกัน Error หัวตารางไม่ตรง)
+# 2. STOCK & ORDER (เหมือนเดิม)
 def render_stock_order():
     st.header("🛒 Check Stock & Open Order (ระบบตะกร้า)")
-    
-    if 'cart' not in st.session_state:
-        st.session_state['cart'] = []
-    
+    if 'cart' not in st.session_state: st.session_state['cart'] = []
     df = get_data("Inventory")
     if df.empty: st.warning("Stock Data Not Found"); return
-    
     df_ord = get_data("Orders")
-    
-    # 🟢 แก้ Error: Clean หัวตารางให้เรียบร้อย (ลบวรรค, ทำตัวเล็ก)
     if not df_ord.empty:
-        df_ord.columns = df_ord.columns.str.strip() # ลบช่องว่างหน้าหลัง
-        # ถ้าไม่มีคอลัมน์ customer_name ให้ลองหา customer แทน
+        df_ord.columns = df_ord.columns.str.strip()
         if 'customer_name' not in df_ord.columns and 'customer' in df_ord.columns:
             df_ord.rename(columns={'customer': 'customer_name'}, inplace=True)
-
     reserved = pd.DataFrame()
     if not df_ord.empty:
         active_status = ['Pending_Manager', 'Pending_SaleCO', 'Reserved']
-        # เช็คว่ามีคอลัมน์ status ไหม กันเหนียว
         if 'status' in df_ord.columns:
             pending = df_ord[df_ord['status'].isin(active_status)]
             if not pending.empty:
                 reserved = pending.groupby('code')['qty'].sum().reset_index()
                 reserved.columns = ['code', 'reserved_qty']
-    
     df['code'] = df['code'].astype(str)
     if not reserved.empty:
         reserved['code'] = reserved['code'].astype(str)
         df = pd.merge(df, reserved, on='code', how='left')
-    else:
-        df['reserved_qty'] = 0
+    else: df['reserved_qty'] = 0
     df['reserved_qty'] = df['reserved_qty'].fillna(0)
     df['available'] = df['real_stock'] - df['reserved_qty']
-
     search = st.text_input("🔍 ค้นหาสินค้า")
     if search:
         mask = df['name'].astype(str).str.contains(search, case=False) | df['code'].astype(str).str.contains(search, case=False)
         df = df[mask]
-
-    event = st.dataframe(
-        df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], 
-        column_config={
-            "real_stock": "Stock", 
-            "reserved_qty": "Jong", 
-            "available": "Ready",
-            "unit": "หน่วยนับ"
-        },
-        use_container_width=True, on_select="rerun", selection_mode="single-row"
-    )
-
+    event = st.dataframe(df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], column_config={"real_stock": "Stock", "reserved_qty": "Jong", "available": "Ready", "unit": "หน่วยนับ"}, use_container_width=True, on_select="rerun", selection_mode="single-row")
     if event.selection.rows:
         item = df.iloc[event.selection.rows[0]]
         st.divider()
         st.subheader(f"➕ เพิ่มลงตะกร้า: {item['name']}")
-        
         c1, c2 = st.columns(2)
         qty = c1.number_input(f"จำนวน ({item['unit']})", min_value=1, value=1)
         ptype = c2.radio("ราคา", ["Normal", "Special"])
-        
         price = 0.0
         if ptype == "Special":
             price = st.number_input("ระบุราคาพิเศษ", min_value=0.0)
             st.warning("⚠️ ราคาพิเศษต้องรออนุมัติ")
-
         if st.button("🛒 ใส่ตะกร้า", type="primary"):
-            cart_item = {
-                "code": item['code'],
-                "name": item['name'],
-                "qty": qty,
-                "unit": item['unit'],
-                "price": price,
-                "type": ptype,
-                "total": qty * price if ptype == "Special" else 0
-            }
+            cart_item = {"code": item['code'], "name": item['name'], "qty": qty, "unit": item['unit'], "price": price, "type": ptype, "total": qty * price if ptype == "Special" else 0}
             st.session_state['cart'].append(cart_item)
             st.success(f"เพิ่ม {item['name']} จำนวน {qty} ลงตะกร้าแล้ว!")
             time.sleep(0.5)
             st.rerun()
-
     st.divider()
     st.subheader(f"🛒 ตะกร้าสินค้า ({len(st.session_state['cart'])})")
-    
     if st.session_state['cart']:
         cart_df = pd.DataFrame(st.session_state['cart'])
         st.dataframe(cart_df, use_container_width=True)
-        
         if st.button("❌ ล้างตะกร้า"):
             st.session_state['cart'] = []
             st.rerun()
-
         st.write("---")
         st.write("🚀 **ยืนยันการสั่งซื้อ**")
         c1, c2 = st.columns(2)
         s_name = c1.text_input("ชื่อเซลล์", value=st.session_state['user_name'], disabled=True)
         c_name = c2.text_input("ชื่อลูกค้า (Customer)")
-
         if st.button("✅ ยืนยันออเดอร์ (Confirm Order)", type="primary"):
             if c_name:
                 so_id = generate_so_no()
                 for item in st.session_state['cart']:
                     status = "Pending_Manager" if item['type'] == "Special" else "Pending_SaleCO"
-                    row = [
-                        so_id, str(datetime.date.today()), s_name, c_name, item['code'], 
-                        item['qty'], item['price'], item['total'], item['type'], status
-                    ]
+                    row = [so_id, str(datetime.date.today()), s_name, c_name, item['code'], item['qty'], item['price'], item['total'], item['type'], status]
                     append_data("Orders", row)
-                
                 st.success(f"🎉 เปิดบิลสำเร็จ! เลขที่: {so_id}")
                 st.session_state['cart'] = []
                 time.sleep(2)
                 st.rerun()
-            else:
-                st.error("กรุณาระบุชื่อลูกค้า")
-    else:
-        st.info("ตะกร้ายังว่างอยู่ เลือกสินค้าด้านบนได้เลย")
-
+            else: st.error("กรุณาระบุชื่อลูกค้า")
+    else: st.info("ตะกร้ายังว่างอยู่ เลือกสินค้าด้านบนได้เลย")
     st.write("---")
     with st.expander("📜 ประวัติการเปิดบิลของฉัน (My Sale History)"):
         if not df_ord.empty:
@@ -513,29 +462,20 @@ def render_stock_order():
                 my_history = df_ord[df_ord['sales_person'] == st.session_state['user_name']]
                 if not my_history.empty:
                     my_history = my_history.iloc[::-1]
-                    # 🟢 เลือกแสดงเฉพาะคอลัมน์ที่มีอยู่จริง (กัน Error)
                     cols_to_show = ['id', 'date', 'customer_name', 'code', 'qty', 'status']
                     valid_cols = [c for c in cols_to_show if c in my_history.columns]
-                    
                     st.dataframe(my_history[valid_cols], use_container_width=True)
-                else:
-                    st.caption("ยังไม่มีประวัติการขาย")
-            else:
-                st.error("⚠️ ไม่พบคอลัมน์ 'sales_person' ใน Sheet Orders กรุณาเช็คหัวตาราง")
+                else: st.caption("ยังไม่มีประวัติการขาย")
+            else: st.error("⚠️ ไม่พบคอลัมน์ 'sales_person' ใน Sheet Orders")
 
-# 3. MANAGER APPROVE
+# 3. MANAGER APPROVE (เหมือนเดิม)
 def render_manager():
     st.header("👔 Approval Dashboard")
     df = get_data("Orders")
     if df.empty: st.info("ไม่มีข้อมูล"); return
     pending = df[df['status'] == 'Pending_Manager']
-    if pending.empty:
-        st.success("✅ ไม่มีรายการค้างอนุมัติ")
-        return
-    
-    # Group by Order ID เพื่ออนุมัติทีเดียวทั้งบิล
+    if pending.empty: st.success("✅ ไม่มีรายการค้างอนุมัติ"); return
     order_groups = pending.groupby('id')
-    
     for oid, items in order_groups:
         with st.expander(f"Order: {oid} | เซลล์: {items.iloc[0]['sales_person']} | ลูกค้า: {items.iloc[0]['customer_name']}"):
             st.dataframe(items[['code', 'qty', 'unit_price', 'total_price']])
@@ -551,96 +491,63 @@ def render_manager():
                 time.sleep(1)
                 st.rerun()
 
-# 4. SALE-CO (Flow ใหม่: แค่กดรับทราบ/จองของ)
+# 4. SALE-CO (เหมือนเดิม)
 def render_saleco():
     st.header("👩‍💼 Sale-CO: Confirm Reservation")
     st.info("ℹ️ หน้าที่: ตรวจสอบออเดอร์ และกด 'ยืนยันการจอง' เพื่อแจ้ง WH ให้เตรียมของ")
-    
     df = get_data("Orders")
     if df.empty: return
     pending = df[df['status'] == 'Pending_SaleCO']
     if pending.empty: st.success("✅ ไม่มีรายการค้างจอง"); return
-    
-    # Group by Order ID
     order_groups = pending.groupby('id')
-
     for oid, items in order_groups:
         with st.expander(f"Order: {oid} | ลูกค้า: {items.iloc[0]['customer_name']}"):
             st.dataframe(items[['code', 'qty', 'status']])
-            
-            # ปุ่มเดียว เปลี่ยนสถานะเป็น Reserved
             if st.button("✅ ยืนยันจองของ (Confirm Reserve)", key=f"res_{oid}"):
                 run_query("update_order_status", oid=oid, status="Reserved")
                 st.success(f"จองของสำหรับออเดอร์ {oid} แล้ว! (รอ WH ตัดสต็อก)")
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (Flow ใหม่: ตัดสต็อกจริงจากยอด Reserved)
+# 5. WH ADMIN (เหมือนเดิม)
 def render_wh():
     st.header("🏭 Warehouse Management")
-    
     tab1, tab2, tab3, tab4 = st.tabs(["📦 Ship Orders (ตัดสต็อก)", "✏️ Adjust Stock", "📂 Upload Excel", "📜 History"])
-    
-    # --- TAB 1: ตัดสต็อก (Flow ใหม่) ---
     with tab1:
         st.subheader("🚚 รายการรอส่งของ (Reserved -> Ship)")
         st.info("ℹ️ รายการเหล่านี้ Sale-CO จองไว้แล้ว กดตัดสต็อกได้เลย")
-        
         df_ord = get_data("Orders")
         if df_ord.empty: st.write("ไม่มีข้อมูล"); return
-        
-        # กรองเฉพาะสถานะ Reserved
         reserved_orders = df_ord[df_ord['status'] == 'Reserved']
-        
-        if reserved_orders.empty:
-            st.success("✅ ไม่มีรายการรอส่งของ")
+        if reserved_orders.empty: st.success("✅ ไม่มีรายการรอส่งของ")
         else:
             order_groups = reserved_orders.groupby('id')
             for oid, items in order_groups:
                 with st.expander(f"📦 Order: {oid} | ลูกค้า: {items.iloc[0]['customer_name']}"):
                     st.dataframe(items[['code', 'qty', 'status']])
-                    
                     if st.button("🚚 ตัดสต็อก & ส่งของ (Ship)", key=f"ship_{oid}"):
                         inv = get_data("Inventory")
-                        # Loop ตัดสต็อกทีละรายการในบิล
                         for _, item in items.iterrows():
-                            # หาจำนวนปัจจุบัน
                             curr_stock = inv.loc[inv['code'].astype(str) == str(item['code']), 'real_stock'].values[0]
                             new_stock = int(curr_stock) - int(item['qty'])
-                            
-                            # Update Stock
                             run_query("update_stock", code=str(item['code']), new_stock=new_stock, remark=f"Ship Order {oid}")
-                            
-                            # Log History
                             ts = str(datetime.datetime.now())
                             today = str(datetime.date.today())
                             log_row = [ts, today, "Ship Order", str(item['code']), "", item['qty'], "", st.session_state['user_name']]
                             append_data("WH_Logs", log_row)
-                        
-                        # เปลี่ยนสถานะ Order เป็น Completed
                         run_query("update_order_status", oid=oid, status="Completed")
-                        
                         st.success(f"✅ ตัดสต็อก Order {oid} เรียบร้อย!")
                         time.sleep(1)
                         st.rerun()
-
-    # --- TAB 2, 3, 4: เหมือนเดิม (ขอละไว้เพื่อความกระชับ แต่วางทับของเดิมได้เลยครับ) ---
-    with tab2: # Adjust Stock (เหมือนเดิม)
+    with tab2:
         df = get_data("Inventory")
         if not df.empty:
             search = st.text_input("ค้นหา:", placeholder="Code/Name")
             if search: 
                 mask = df['code'].astype(str).str.contains(search, case=False) | df['name'].astype(str).str.contains(search, case=False)
                 df = df[mask]
-            
             if 'remark' not in df.columns: df['remark'] = ""
-            
-            event = st.dataframe(
-                df[['code','name','real_stock','unit', 'remark']], 
-                column_config={"unit": "หน่วยนับ", "remark": "หมายเหตุล่าสุด"}, 
-                on_select="rerun", selection_mode="single-row", use_container_width=True
-            )
-            
+            event = st.dataframe(df[['code','name','real_stock','unit', 'remark']], column_config={"unit": "หน่วยนับ", "remark": "หมายเหตุล่าสุด"}, on_select="rerun", selection_mode="single-row", use_container_width=True)
             if event.selection.rows:
                 item = df.iloc[event.selection.rows[0]]
                 st.info(f"สินค้า: {item['name']} | 📦 ของเดิม: {item['real_stock']} {item['unit']}")
@@ -672,8 +579,7 @@ def render_wh():
                         time.sleep(1)
                         st.rerun()
                     else: st.warning("ระบุจำนวน > 0")
-
-    with tab3: # Upload Excel (เหมือนเดิม)
+    with tab3:
         st.warning("⚠️ การ Upload Excel จะลบข้อมูลเดิมทั้งหมด")
         up = st.file_uploader("เลือกไฟล์ Excel Stock (.xlsx)", type=['xlsx'])
         if up and st.button("🚀 เริ่มอัปโหลด"):
@@ -694,10 +600,8 @@ def render_wh():
                 st.success(f"✅ อัปโหลดสำเร็จ {len(upload_data)} รายการ!")
                 time.sleep(2)
                 st.rerun()
-            except Exception as e:
-                st.error(f"เกิดข้อผิดพลาด: {e}")
-
-    with tab4: # History (เหมือนเดิม)
+            except Exception as e: st.error(f"เกิดข้อผิดพลาด: {e}")
+    with tab4:
         st.subheader("📜 ประวัติการ รับเข้า/จ่ายออก")
         sel_date = st.date_input("เลือกวันที่ดูประวัติ", datetime.date.today())
         df_log = get_data("WH_Logs")
@@ -708,10 +612,8 @@ def render_wh():
                 daily_log = daily_log.sort_values(by='Timestamp', ascending=False)
                 st.info(f"📅 รายการประจำวันที่: {sel_date}")
                 st.dataframe(daily_log[['Timestamp', 'Action', 'Name', 'Qty', 'Unit', 'User']], hide_index=True, use_container_width=True)
-            else:
-                st.warning(f"🚫 ไม่พบรายการเคลื่อนไหวในวันที่ {sel_date}")
-        else:
-            st.warning("ยังไม่มีประวัติการใช้งาน")
+            else: st.warning(f"🚫 ไม่พบรายการเคลื่อนไหวในวันที่ {sel_date}")
+        else: st.warning("ยังไม่มีประวัติการใช้งาน")
 
 # 6. SUPPORT (เหมือนเดิม)
 def render_support():
@@ -758,13 +660,9 @@ if check_password():
             st.error("Access Denied")
             if st.button("Logout"): logout()
 
-    # Router
     if "1." in selected: render_sale_report()
     elif "2." in selected: render_stock_order()
     elif "3." in selected: render_manager()
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
-
-
-

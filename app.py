@@ -3,14 +3,14 @@ import pandas as pd
 import datetime
 import time
 import os
-import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # ==========================================
 # ⚙️ CONFIG & SECURITY
 # ==========================================
-st.set_page_config(layout="wide", page_title="TTT Mini ERP (Enterprise)")
+# 🟢 ตั้งค่า initial_sidebar_state="expanded" เพื่อให้เมนูพยายามกางออก
+st.set_page_config(layout="wide", page_title="TTT Mini ERP", initial_sidebar_state="expanded")
 st.markdown("""<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}</style>""", unsafe_allow_html=True)
 
 SHEET_NAME = "TTT_DB"
@@ -36,21 +36,23 @@ USERS = {
 }
 
 # ==========================================
-# ☁️ GOOGLE SHEETS CONNECTION (ท่าไม้ตาย JSON)
+# ☁️ GOOGLE SHEETS CONNECTION (ใช้แบบที่บอสแก้ Secrets ผ่านแล้ว)
 # ==========================================
 @st.cache_resource
 def get_gsheet_client():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
-        # อ่านจาก Secrets แบบมาตรฐาน (ไม่ต้อง json.loads แล้ว)
+        # อ่านจาก Secrets (Cloud)
         if "gcp_service_account" in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"]) # แปลงเป็น Dict
+            creds_dict = dict(st.secrets["gcp_service_account"])
             
-            # แปลง private_key กลับให้เป็นแบบที่ Google ต้องการ
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            # แปลง private_key กลับให้ถูกต้อง (แก้ปัญหา \n)
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         else:
+            # อ่านจากไฟล์ (Localhost)
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
             
         client = gspread.authorize(creds)
@@ -377,64 +379,64 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN
+# 5. WH ADMIN (เอา Password ออกแล้ว)
 def render_wh():
     st.header("🏭 Warehouse Management")
-    if st.text_input("Password ยืนยัน (admin777)", type="password") == "admin777":
-        tab1, tab2 = st.tabs(["✏️ Adjust Stock", "📂 Upload Excel"])
-        with tab1:
-            df = get_data("Inventory")
-            if not df.empty:
-                search = st.text_input("ค้นหา:", placeholder="Code/Name")
-                if search: 
-                    mask = df['code'].astype(str).str.contains(search, case=False) | df['name'].astype(str).str.contains(search, case=False)
-                    df = df[mask]
-                event = st.dataframe(df[['code','name','real_stock','unit']], column_config={"unit": "หน่วยนับ"}, on_select="rerun", selection_mode="single-row", use_container_width=True)
-                if event.selection.rows:
-                    item = df.iloc[event.selection.rows[0]]
-                    st.info(f"สินค้า: {item['name']} | 📦 ของเดิม: {item['real_stock']} {item['unit']}")
-                    adjust_label = f"ระบุจำนวนสินค้า ({item['unit']})"
-                    adjust_qty = st.number_input(adjust_label, min_value=0, step=1, value=0)
-                    c1, c2 = st.columns(2)
-                    if c1.button("➕ เพิ่ม Stock (รับเข้า)", use_container_width=True, type="primary"):
-                        if adjust_qty > 0:
-                            new_val = int(item['real_stock']) + adjust_qty
-                            run_query("update_stock", code=str(item['code']), new_stock=new_val)
-                            st.success(f"✅ รับเข้า {adjust_qty} {item['unit']} เรียบร้อย! (ยอดใหม่: {new_val} {item['unit']})")
-                            time.sleep(1)
-                            st.rerun()
-                        else: st.warning("ระบุจำนวน > 0")
-                    if c2.button("➖ ตัด Stock (จ่ายออก)", use_container_width=True):
-                        if adjust_qty > 0:
-                            new_val = int(item['real_stock']) - adjust_qty
-                            run_query("update_stock", code=str(item['code']), new_stock=new_val)
-                            st.warning(f"🔻 จ่ายออก {adjust_qty} {item['unit']} เรียบร้อย! (ยอดใหม่: {new_val} {item['unit']})")
-                            time.sleep(1)
-                            st.rerun()
-                        else: st.warning("ระบุจำนวน > 0")
-        with tab2:
-            st.warning("⚠️ การ Upload Excel จะลบข้อมูลเดิมทั้งหมด!")
-            up = st.file_uploader("เลือกไฟล์ Excel Stock (.xlsx)", type=['xlsx'])
-            if up and st.button("🚀 เริ่มอัปโหลด"):
-                try:
-                    df_new = pd.read_excel(up)
-                    df_new.columns = df_new.columns.str.strip()
-                    df_new['Stock'] = pd.to_numeric(df_new['Stock'], errors='coerce').fillna(0)
-                    df_new = df_new.fillna("")
-                    upload_data = []
-                    for _, r in df_new.iterrows():
-                        row = [str(r['code']), str(r['กลุ่ม']), str(r['รายละเอียด']), int(r['Stock']), str(r['หน่วยนับขนาน'])]
-                        upload_data.append(row)
-                    client = get_gsheet_client()
-                    wks = client.open(SHEET_NAME).worksheet("Inventory")
-                    wks.clear()
-                    wks.append_row(['code', 'category', 'name', 'real_stock', 'unit'])
-                    wks.append_rows(upload_data)
-                    st.success(f"✅ อัปโหลดสำเร็จ {len(upload_data)} รายการ!")
-                    time.sleep(2)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"เกิดข้อผิดพลาด: {e}")
+    # 🔓 ไม่ต้องเช็ค Password แล้ว
+    tab1, tab2 = st.tabs(["✏️ Adjust Stock", "📂 Upload Excel"])
+    with tab1:
+        df = get_data("Inventory")
+        if not df.empty:
+            search = st.text_input("ค้นหา:", placeholder="Code/Name")
+            if search: 
+                mask = df['code'].astype(str).str.contains(search, case=False) | df['name'].astype(str).str.contains(search, case=False)
+                df = df[mask]
+            event = st.dataframe(df[['code','name','real_stock','unit']], column_config={"unit": "หน่วยนับ"}, on_select="rerun", selection_mode="single-row", use_container_width=True)
+            if event.selection.rows:
+                item = df.iloc[event.selection.rows[0]]
+                st.info(f"สินค้า: {item['name']} | 📦 ของเดิม: {item['real_stock']} {item['unit']}")
+                adjust_label = f"ระบุจำนวนสินค้า ({item['unit']})"
+                adjust_qty = st.number_input(adjust_label, min_value=0, step=1, value=0)
+                c1, c2 = st.columns(2)
+                if c1.button("➕ เพิ่ม Stock (รับเข้า)", use_container_width=True, type="primary"):
+                    if adjust_qty > 0:
+                        new_val = int(item['real_stock']) + adjust_qty
+                        run_query("update_stock", code=str(item['code']), new_stock=new_val)
+                        st.success(f"✅ รับเข้า {adjust_qty} {item['unit']} เรียบร้อย! (ยอดใหม่: {new_val} {item['unit']})")
+                        time.sleep(1)
+                        st.rerun()
+                    else: st.warning("ระบุจำนวน > 0")
+                if c2.button("➖ ตัด Stock (จ่ายออก)", use_container_width=True):
+                    if adjust_qty > 0:
+                        new_val = int(item['real_stock']) - adjust_qty
+                        run_query("update_stock", code=str(item['code']), new_stock=new_val)
+                        st.warning(f"🔻 จ่ายออก {adjust_qty} {item['unit']} เรียบร้อย! (ยอดใหม่: {new_val} {item['unit']})")
+                        time.sleep(1)
+                        st.rerun()
+                    else: st.warning("ระบุจำนวน > 0")
+    with tab2:
+        st.warning("⚠️ การ Upload Excel จะลบข้อมูลเดิมทั้งหมด!")
+        up = st.file_uploader("เลือกไฟล์ Excel Stock (.xlsx)", type=['xlsx'])
+        if up and st.button("🚀 เริ่มอัปโหลด"):
+            try:
+                df_new = pd.read_excel(up)
+                df_new.columns = df_new.columns.str.strip()
+                df_new['Stock'] = pd.to_numeric(df_new['Stock'], errors='coerce').fillna(0)
+                df_new = df_new.fillna("")
+                upload_data = []
+                for _, r in df_new.iterrows():
+                    row = [str(r['code']), str(r['กลุ่ม']), str(r['รายละเอียด']), int(r['Stock']), str(r['หน่วยนับขนาน'])]
+                    upload_data.append(row)
+                client = get_gsheet_client()
+                wks = client.open(SHEET_NAME).worksheet("Inventory")
+                wks.clear()
+                wks.append_row(['code', 'category', 'name', 'real_stock', 'unit'])
+                wks.append_rows(upload_data)
+                st.success(f"✅ อัปโหลดสำเร็จ {len(upload_data)} รายการ!")
+                time.sleep(2)
+                st.rerun()
+            except Exception as e:
+                st.error(f"เกิดข้อผิดพลาด: {e}")
 
 # 6. SUPPORT
 def render_support():
@@ -489,4 +491,3 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
-

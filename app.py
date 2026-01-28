@@ -33,9 +33,9 @@ USERS = {
     "nattapong": {"pass": "Nattapong2026", "role": "Sale", "name": "Nattapong"},
     "samanan": {"pass": "Samanan2026", "role": "Sale", "name": "Samanan"},
     "suksun": {"pass": "Suksun2026", "role": "Sale", "name": "Suksun"},
-    "sale01": {"pass": "Sale001", "role": "Sale", "name": "Sale01"},
-    "sale02": {"pass": "Sale2025", "role": "Sale", "name": "Sale02"},
-    "sale03": {"pass": "Sale2026", "role": "Sale", "name": "Sale03"},
+    "wutthipong": {"pass": "Wutthipong2026", "role": "Sale", "name": "Wutthipong"},
+    "pojana": {"pass": "Pojana2026", "role": "Sale", "name": "Pojana"},
+    "siva": {"pass": "Siva2026", "role": "Sale", "name": "Siva"},
     "sale04": {"pass": "S@le04", "role": "Sale", "name": "Sale04"},
     "vichai": {"pass": "Vichai2026", "role": "WH", "name": "Vichai"}
 }
@@ -496,3 +496,4 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
+

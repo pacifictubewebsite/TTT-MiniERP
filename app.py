@@ -42,11 +42,14 @@ USERS = {
 def get_gsheet_client():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
-        # 1. อ่านจาก Secrets (Cloud)
-        if "gcp_service_account" in st.secrets and "json_file" in st.secrets["gcp_service_account"]:
-            creds_dict = json.loads(st.secrets["gcp_service_account"]["json_file"])
+        # อ่านจาก Secrets แบบมาตรฐาน (ไม่ต้อง json.loads แล้ว)
+        if "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"]) # แปลงเป็น Dict
+            
+            # แปลง private_key กลับให้เป็นแบบที่ Google ต้องการ
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        # 2. อ่านจากไฟล์ (Localhost)
         else:
             creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
             
@@ -486,3 +489,4 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
+

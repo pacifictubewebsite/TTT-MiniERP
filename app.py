@@ -349,11 +349,10 @@ def render_sale_report():
                             st.session_state['edit_data'] = row.to_dict()
                             st.rerun()
 
-# 2. STOCK & ORDER (NEW: Cart System & SO History)
+# 2. STOCK & ORDER (Fix: ป้องกัน Error หัวตารางไม่ตรง)
 def render_stock_order():
     st.header("🛒 Check Stock & Open Order (ระบบตะกร้า)")
     
-    # 🛒 สร้างตะกร้าสินค้าใน Session State ถ้ายังไม่มี
     if 'cart' not in st.session_state:
         st.session_state['cart'] = []
     
@@ -361,15 +360,23 @@ def render_stock_order():
     if df.empty: st.warning("Stock Data Not Found"); return
     
     df_ord = get_data("Orders")
+    
+    # 🟢 แก้ Error: Clean หัวตารางให้เรียบร้อย (ลบวรรค, ทำตัวเล็ก)
+    if not df_ord.empty:
+        df_ord.columns = df_ord.columns.str.strip() # ลบช่องว่างหน้าหลัง
+        # ถ้าไม่มีคอลัมน์ customer_name ให้ลองหา customer แทน
+        if 'customer_name' not in df_ord.columns and 'customer' in df_ord.columns:
+            df_ord.rename(columns={'customer': 'customer_name'}, inplace=True)
+
     reserved = pd.DataFrame()
     if not df_ord.empty:
-        # 🟢 คำนวณยอดจอง (รวม Pending_Manager, Pending_SaleCO, และ Reserved)
-        # ไม่รวม Completed (เพราะตัดสต็อกจริงไปแล้ว) และ Cancelled
         active_status = ['Pending_Manager', 'Pending_SaleCO', 'Reserved']
-        pending = df_ord[df_ord['status'].isin(active_status)]
-        if not pending.empty:
-            reserved = pending.groupby('code')['qty'].sum().reset_index()
-            reserved.columns = ['code', 'reserved_qty']
+        # เช็คว่ามีคอลัมน์ status ไหม กันเหนียว
+        if 'status' in df_ord.columns:
+            pending = df_ord[df_ord['status'].isin(active_status)]
+            if not pending.empty:
+                reserved = pending.groupby('code')['qty'].sum().reset_index()
+                reserved.columns = ['code', 'reserved_qty']
     
     df['code'] = df['code'].astype(str)
     if not reserved.empty:
@@ -380,7 +387,6 @@ def render_stock_order():
     df['reserved_qty'] = df['reserved_qty'].fillna(0)
     df['available'] = df['real_stock'] - df['reserved_qty']
 
-    # --- ส่วนที่ 1: ค้นหาและหยิบใส่ตะกร้า ---
     search = st.text_input("🔍 ค้นหาสินค้า")
     if search:
         mask = df['name'].astype(str).str.contains(search, case=False) | df['code'].astype(str).str.contains(search, case=False)
@@ -412,7 +418,6 @@ def render_stock_order():
             st.warning("⚠️ ราคาพิเศษต้องรออนุมัติ")
 
         if st.button("🛒 ใส่ตะกร้า", type="primary"):
-            # เพิ่มสินค้าลง Session State Cart
             cart_item = {
                 "code": item['code'],
                 "name": item['name'],
@@ -420,19 +425,17 @@ def render_stock_order():
                 "unit": item['unit'],
                 "price": price,
                 "type": ptype,
-                "total": qty * price if ptype == "Special" else 0 # (ราคาปกติอาจจะไปดึงทีหลัง หรือใส่ 0 ไว้ก่อน)
+                "total": qty * price if ptype == "Special" else 0
             }
             st.session_state['cart'].append(cart_item)
             st.success(f"เพิ่ม {item['name']} จำนวน {qty} ลงตะกร้าแล้ว!")
             time.sleep(0.5)
             st.rerun()
 
-    # --- ส่วนที่ 2: ดูตะกร้า & ยืนยันออเดอร์ ---
     st.divider()
     st.subheader(f"🛒 ตะกร้าสินค้า ({len(st.session_state['cart'])})")
     
     if st.session_state['cart']:
-        # แสดงรายการในตะกร้า
         cart_df = pd.DataFrame(st.session_state['cart'])
         st.dataframe(cart_df, use_container_width=True)
         
@@ -448,28 +451,17 @@ def render_stock_order():
 
         if st.button("✅ ยืนยันออเดอร์ (Confirm Order)", type="primary"):
             if c_name:
-                # 1. เจนเลข SO ใหม่ (เลขเดียวใช้กับทุกสินค้าในตะกร้า)
                 so_id = generate_so_no()
-                
-                # 2. Loop บันทึกทีละรายการ
                 for item in st.session_state['cart']:
                     status = "Pending_Manager" if item['type'] == "Special" else "Pending_SaleCO"
                     row = [
-                        so_id, # ใช้ SO-XXX แทน timestamp
-                        str(datetime.date.today()), 
-                        s_name, 
-                        c_name, 
-                        item['code'], 
-                        item['qty'], 
-                        item['price'], 
-                        item['total'], 
-                        item['type'], 
-                        status
+                        so_id, str(datetime.date.today()), s_name, c_name, item['code'], 
+                        item['qty'], item['price'], item['total'], item['type'], status
                     ]
                     append_data("Orders", row)
                 
                 st.success(f"🎉 เปิดบิลสำเร็จ! เลขที่: {so_id}")
-                st.session_state['cart'] = [] # ล้างตะกร้า
+                st.session_state['cart'] = []
                 time.sleep(2)
                 st.rerun()
             else:
@@ -477,17 +469,22 @@ def render_stock_order():
     else:
         st.info("ตะกร้ายังว่างอยู่ เลือกสินค้าด้านบนได้เลย")
 
-    # --- ส่วนที่ 3: ประวัติการขายของฉัน (New!) ---
     st.write("---")
     with st.expander("📜 ประวัติการเปิดบิลของฉัน (My Sale History)"):
         if not df_ord.empty:
-            my_history = df_ord[df_ord['sales_person'] == st.session_state['user_name']]
-            if not my_history.empty:
-                # เรียงจากล่าสุด
-                my_history = my_history.iloc[::-1]
-                st.dataframe(my_history[['id', 'date', 'customer_name', 'code', 'qty', 'status']], use_container_width=True)
+            if 'sales_person' in df_ord.columns:
+                my_history = df_ord[df_ord['sales_person'] == st.session_state['user_name']]
+                if not my_history.empty:
+                    my_history = my_history.iloc[::-1]
+                    # 🟢 เลือกแสดงเฉพาะคอลัมน์ที่มีอยู่จริง (กัน Error)
+                    cols_to_show = ['id', 'date', 'customer_name', 'code', 'qty', 'status']
+                    valid_cols = [c for c in cols_to_show if c in my_history.columns]
+                    
+                    st.dataframe(my_history[valid_cols], use_container_width=True)
+                else:
+                    st.caption("ยังไม่มีประวัติการขาย")
             else:
-                st.caption("ยังไม่มีประวัติการขาย")
+                st.error("⚠️ ไม่พบคอลัมน์ 'sales_person' ใน Sheet Orders กรุณาเช็คหัวตาราง")
 
 # 3. MANAGER APPROVE
 def render_manager():
@@ -731,3 +728,4 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
+

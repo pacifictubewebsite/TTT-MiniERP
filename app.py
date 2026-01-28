@@ -160,7 +160,7 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (Fix: แก้ไข Error "now is not defined" + จัดการเวลา)
+# 1. SALE REPORT (Fix: เลือกเวลาได้ทุกนาที ไม่ล็อก 15 นาที)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     if 'edit_mode' not in st.session_state:
@@ -180,15 +180,15 @@ def render_sale_report():
         default_cust = st.session_state['edit_data'].get('customer_name', "") if st.session_state['edit_mode'] else ""
         cust_name = c2.text_input("ชื่อลูกค้า / บริษัท", value=default_cust)
         
-        # 🟢 จุดที่แก้: ประกาศตัวแปร now ก่อนเรียกใช้ (ตัดวินาทีทิ้งด้วย)
+        # ประกาศเวลาปัจจุบัน (ตัดวินาทีทิ้ง)
         now = datetime.datetime.now().replace(second=0, microsecond=0)
 
         t1, t2, t3 = st.columns(3)
         date_visit = t1.date_input("วันที่", datetime.date.today())
         
-        # ใช้ตัวแปร now ที่ประกาศไว้บรรทัดบน
-        time_in = t2.time_input("เวลาเข้า (Check-in)", value=now.time()) 
-        time_out = t3.time_input("เวลาออก (Check-out)", value=now.time())
+        # 🟢 จุดที่แก้: เพิ่ม step=60 (เพื่อให้เลือกได้ละเอียดทุก 1 นาที)
+        time_in = t2.time_input("เวลาเข้า (Check-in)", value=now.time(), step=60) 
+        time_out = t3.time_input("เวลาออก (Check-out)", value=now.time(), step=60)
 
         # ส่วนวัตถุประสงค์
         obj_options = ["1.เข้าพบ/เยี่ยมลูกค้า", "2.เสนอขายสินค้า", "3.วางบิลเก็บเช็ค", "4.แก้ปัญหา", "5.อื่นๆ"]
@@ -262,7 +262,6 @@ def render_sale_report():
                         saved_path = os.path.join(UPLOAD_FOLDER, fname)
                         with open(saved_path, "wb") as f: f.write(img_file.getbuffer())
 
-                    # 🟢 จุดที่แก้: แปลงเวลาเป็น String แบบสวยๆ (HH:MM) ก่อนบันทึก
                     row = [
                         default_doc, str(date_visit), sales_name, cust_name, final_obj, 
                         problem, remark, saved_path, 0, str(datetime.datetime.now()),
@@ -294,7 +293,6 @@ def render_sale_report():
                 with col_a:
                     with st.expander(f"📄 {row['doc_no']} | {row['customer_name']} {edit_info}"):
                         st.write(f"**วันที่:** {row['date']}")
-                        # โชว์เวลา
                         if 'time_in' in row and row['time_in']:
                             st.write(f"🕒 **เวลา:** {row['time_in']} - {row['time_out']}")
                         
@@ -313,7 +311,6 @@ def render_sale_report():
                             st.session_state['edit_mode'] = True
                             st.session_state['edit_data'] = row.to_dict()
                             st.rerun()
-
 # 2. STOCK & ORDER (อัปเดต: ดูประวัติลูกค้าได้)
 def render_stock_order():
     st.header("🛒 Check Stock & Open Order")
@@ -548,3 +545,4 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
+

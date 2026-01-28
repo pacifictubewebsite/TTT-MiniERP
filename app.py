@@ -160,7 +160,7 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (Fix: เลือกเวลาได้ทุกนาที ไม่ล็อก 15 นาที)
+# 1. SALE REPORT (Fix: Dropdown คู่แข่ง + Dropdown สินค้า)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     if 'edit_mode' not in st.session_state:
@@ -180,39 +180,50 @@ def render_sale_report():
         default_cust = st.session_state['edit_data'].get('customer_name', "") if st.session_state['edit_mode'] else ""
         cust_name = c2.text_input("ชื่อลูกค้า / บริษัท", value=default_cust)
         
-        # ประกาศเวลาปัจจุบัน (ตัดวินาทีทิ้ง)
         now = datetime.datetime.now().replace(second=0, microsecond=0)
-
         t1, t2, t3 = st.columns(3)
         date_visit = t1.date_input("วันที่", datetime.date.today())
-        
-        # 🟢 จุดที่แก้: เพิ่ม step=60 (เพื่อให้เลือกได้ละเอียดทุก 1 นาที)
         time_in = t2.time_input("เวลาเข้า (Check-in)", value=now.time(), step=60) 
         time_out = t3.time_input("เวลาออก (Check-out)", value=now.time(), step=60)
 
-        # ส่วนวัตถุประสงค์
         obj_options = ["1.เข้าพบ/เยี่ยมลูกค้า", "2.เสนอขายสินค้า", "3.วางบิลเก็บเช็ค", "4.แก้ปัญหา", "5.อื่นๆ"]
         selected_objs = st.multiselect("วัตถุประสงค์", obj_options)
         
-        # ส่วนข้อมูลคู่แข่ง
+        # 🟢 ส่วนที่แก้ใหม่: Dropdown 2 ตัว (คู่แข่ง + สินค้า)
         st.write("---")
-        st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด (ถ้ามี)**")
+        st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด**")
         
+        # 1. โหลดรายชื่อคู่แข่ง
         df_comp = get_data("Competitors")
         comp_list = df_comp['name'].tolist() if not df_comp.empty else []
         comp_list.insert(0, "- ไม่ระบุ -")
-        comp_list.append("➕ เพิ่มรายชื่อใหม่...")
+        comp_list.append("➕ เพิ่มคู่แข่งใหม่...")
+        
+        # 2. โหลดรายชื่อสินค้าคู่แข่ง
+        df_prod = get_data("Competitor_Products")
+        prod_list = df_prod['product_name'].tolist() if not df_prod.empty else []
+        prod_list.insert(0, "")
+        prod_list.append("➕ เพิ่มสินค้าใหม่...")
         
         col_comp1, col_comp2, col_comp3 = st.columns(3)
-        selected_comp = col_comp1.selectbox("ชื่อคู่แข่ง", comp_list)
         
+        # --- ช่องเลือกคู่แข่ง ---
+        selected_comp = col_comp1.selectbox("ชื่อคู่แข่ง", comp_list)
         final_comp_name = ""
-        if selected_comp == "➕ เพิ่มรายชื่อใหม่...":
+        if selected_comp == "➕ เพิ่มคู่แข่งใหม่...":
             final_comp_name = col_comp1.text_input("ระบุชื่อคู่แข่งใหม่", placeholder="เช่น BPฟ้า")
         elif selected_comp != "- ไม่ระบุ -":
             final_comp_name = selected_comp
             
-        comp_product = col_comp2.text_input("สินค้าคู่แข่ง", placeholder="เช่น ท่อ 3 นิ้ว")
+        # --- ช่องเลือกสินค้า ---
+        selected_prod = col_comp2.selectbox("สินค้าคู่แข่ง", prod_list)
+        final_comp_prod = ""
+        if selected_prod == "➕ เพิ่มสินค้าใหม่...":
+            final_comp_prod = col_comp2.text_input("ระบุสินค้าใหม่", placeholder="เช่น ท่อ 3 นิ้ว")
+        elif selected_prod != "":
+            final_comp_prod = selected_prod
+
+        # --- ช่องราคา ---
         comp_price = col_comp3.number_input("ราคาที่ลูกค้าซื้อเข้า", min_value=0.0, step=0.1)
 
         st.write("---")
@@ -250,10 +261,16 @@ def render_sale_report():
         else:
             if st.button("💾 บันทึกรายงานใหม่", type="primary"):
                 if cust_name:
-                    if selected_comp == "➕ เพิ่มรายชื่อใหม่..." and final_comp_name:
+                    # 🟢 Logic 1: บันทึกชื่อคู่แข่งใหม่ (ถ้ามี)
+                    if selected_comp == "➕ เพิ่มคู่แข่งใหม่..." and final_comp_name:
                         if final_comp_name not in comp_list:
                             append_data("Competitors", [final_comp_name])
                     
+                    # 🟢 Logic 2: บันทึกชื่อสินค้าใหม่ (ถ้ามี)
+                    if selected_prod == "➕ เพิ่มสินค้าใหม่..." and final_comp_prod:
+                        if final_comp_prod not in prod_list:
+                            append_data("Competitor_Products", [final_comp_prod])
+
                     final_obj = ", ".join(selected_objs)
                     saved_path = ""
                     if img_file:
@@ -267,7 +284,7 @@ def render_sale_report():
                         problem, remark, saved_path, 0, str(datetime.datetime.now()),
                         time_in.strftime("%H:%M"), 
                         time_out.strftime("%H:%M"), 
-                        final_comp_name, comp_product, comp_price
+                        final_comp_name, final_comp_prod, comp_price
                     ]
                     append_data("Sale_Reports", row)
                     st.success(f"✅ บันทึกสำเร็จ: {default_doc}")
@@ -298,6 +315,7 @@ def render_sale_report():
                         
                         st.write(f"**วัตถุประสงค์:** {row['objective']}")
                         
+                        # โชว์ข้อมูลที่ปรับแก้ใหม่
                         if 'comp_name' in row and row['comp_name']:
                             st.info(f"🕵️ **คู่แข่ง:** {row['comp_name']} | สินค้า: {row['comp_product']} | ราคา: {row['comp_price']}")
 
@@ -311,6 +329,7 @@ def render_sale_report():
                             st.session_state['edit_mode'] = True
                             st.session_state['edit_data'] = row.to_dict()
                             st.rerun()
+                            
 # 2. STOCK & ORDER (อัปเดต: ดูประวัติลูกค้าได้)
 def render_stock_order():
     st.header("🛒 Check Stock & Open Order")
@@ -545,4 +564,5 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
+
 

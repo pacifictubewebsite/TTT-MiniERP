@@ -154,6 +154,10 @@ def check_password():
     if not st.session_state['logged_in']:
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
+            # 🟢 ส่วนที่เพิ่ม: โชว์โลโก้ตรงกลาง
+            if os.path.exists("images.png"):
+                st.image("images.png", width=200) # ปรับขนาดเล็กใหญ่ตรงนี้ (200 คือกำลังดี)
+                
             st.title("🔐 TTT Login Portal")
             username = st.text_input("Username").lower()
             password = st.text_input("Password", type="password")
@@ -634,6 +638,10 @@ if check_password():
     user = st.session_state['user_name']
     
     with st.sidebar:
+        # 🟢 ส่วนที่เพิ่ม: โชว์โลโก้บนหัวเมนู
+        if os.path.exists("images.png"):
+            st.image("images.png", use_container_width=True) # ให้มันขยายเต็มความกว้างเมนู
+            
         st.title(f"👤 {user}")
         st.caption(f"Role: {role}")
         st.divider()
@@ -666,3 +674,4 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
+

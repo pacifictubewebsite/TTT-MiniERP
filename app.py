@@ -190,7 +190,7 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (เหมือนเดิม)
+# 1. SALE REPORT (Fix: แก้ปัญหาข้อมูลคู่แข่งหายเวลากรอกช่องอื่น)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     if 'edit_mode' not in st.session_state:
@@ -222,11 +222,13 @@ def render_sale_report():
         st.write("---")
         st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด**")
         
+        # 1. โหลดรายชื่อคู่แข่ง
         df_comp = get_data("Competitors")
         comp_list = df_comp['name'].tolist() if not df_comp.empty else []
         comp_list.insert(0, "- ไม่ระบุ -")
         comp_list.append("➕ เพิ่มคู่แข่งใหม่...")
         
+        # 2. โหลดรายชื่อสินค้าคู่แข่ง
         df_prod = get_data("Competitor_Products")
         prod_list = df_prod['product_name'].tolist() if not df_prod.empty else []
         prod_list.insert(0, "")
@@ -234,21 +236,22 @@ def render_sale_report():
         
         col_comp1, col_comp2, col_comp3 = st.columns(3)
         
-        selected_comp = col_comp1.selectbox("ชื่อคู่แข่ง", comp_list)
+        # 🟢 ใส่ key="xxx" เพื่อให้ระบบจำค่าได้ ไม่รีเซ็ตเอง
+        selected_comp = col_comp1.selectbox("ชื่อคู่แข่ง", comp_list, key="sel_comp_key")
         final_comp_name = ""
         if selected_comp == "➕ เพิ่มคู่แข่งใหม่...":
-            final_comp_name = col_comp1.text_input("ระบุชื่อคู่แข่งใหม่", placeholder="เช่น BPฟ้า")
+            final_comp_name = col_comp1.text_input("ระบุชื่อคู่แข่งใหม่", placeholder="เช่น BPฟ้า", key="txt_comp_new")
         elif selected_comp != "- ไม่ระบุ -":
             final_comp_name = selected_comp
             
-        selected_prod = col_comp2.selectbox("สินค้าคู่แข่ง", prod_list)
+        selected_prod = col_comp2.selectbox("สินค้าคู่แข่ง", prod_list, key="sel_prod_key")
         final_comp_prod = ""
         if selected_prod == "➕ เพิ่มสินค้าใหม่...":
-            final_comp_prod = col_comp2.text_input("ระบุสินค้าใหม่", placeholder="เช่น ท่อ 3 นิ้ว")
+            final_comp_prod = col_comp2.text_input("ระบุสินค้าใหม่", placeholder="เช่น ท่อ 3 นิ้ว", key="txt_prod_new")
         elif selected_prod != "":
             final_comp_prod = selected_prod
 
-        comp_price = col_comp3.number_input("ราคาที่ลูกค้าซื้อเข้า", min_value=0.0, step=0.1)
+        comp_price = col_comp3.number_input("ราคาที่ลูกค้าซื้อเข้า", min_value=0.0, step=0.1, key="num_price_key")
 
         st.write("---")
         
@@ -309,7 +312,15 @@ def render_sale_report():
                         final_comp_name, final_comp_prod, comp_price
                     ]
                     append_data("Sale_Reports", row)
+                    
                     st.success(f"✅ บันทึกสำเร็จ: {default_doc}")
+                    
+                    # 🟢 ล้างค่า Key ต่างๆ เพื่อให้หน้าจอพร้อมรับงานใหม่ (Reset State)
+                    keys_to_clear = ["sel_comp_key", "txt_comp_new", "sel_prod_key", "txt_prod_new", "num_price_key"]
+                    for k in keys_to_clear:
+                        if k in st.session_state:
+                            del st.session_state[k]
+                            
                     time.sleep(1)
                     st.rerun()
                 else:
@@ -728,4 +739,5 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
+
 

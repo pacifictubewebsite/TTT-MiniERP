@@ -11,7 +11,12 @@ from oauth2client.service_account import ServiceAccountCredentials
 # ==========================================
 # 🟢 ตั้งค่า initial_sidebar_state="expanded" เพื่อให้เมนูพยายามกางออก
 st.set_page_config(layout="wide", page_title="TTT Mini ERP", initial_sidebar_state="expanded")
-st.markdown("""<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}</style>""", unsafe_allow_html=True)
+
+# 🟢 แก้ไขตรงนี้: ลบ 'header {visibility: hidden;}' ออก เพื่อให้ปุ่มเปิดเมนูไม่หาย
+st.markdown("""<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+</style>""", unsafe_allow_html=True)
 
 SHEET_NAME = "TTT_DB"
 UPLOAD_FOLDER = "report_images"
@@ -36,7 +41,7 @@ USERS = {
 }
 
 # ==========================================
-# ☁️ GOOGLE SHEETS CONNECTION (ใช้แบบที่บอสแก้ Secrets ผ่านแล้ว)
+# ☁️ GOOGLE SHEETS CONNECTION
 # ==========================================
 @st.cache_resource
 def get_gsheet_client():
@@ -302,7 +307,7 @@ def render_stock_order():
         df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], 
         column_config={
             "real_stock": "Stock", 
-            "reserved_qty": "Jong", 
+            "reserved_qty": "tem reserved", 
             "available": "Ready",
             "unit": "หน่วยนับ"
         },

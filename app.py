@@ -128,21 +128,35 @@ def run_query(query_type, **kwargs):
     if query_type == "update_stock":
         wks = sh.worksheet("Inventory")
         cell = wks.find(kwargs['code'])
-        
-        # 🟢 แยกการทำงาน: ถ้าส่ง Stock มาค่อยแก้ Stock
         if 'new_stock' in kwargs:
             wks.update_cell(cell.row, 4, kwargs['new_stock'])
-
-        # 🟢 แยกการทำงาน: ถ้าส่ง Remark มาค่อยแก้ Remark
         if 'remark' in kwargs:
             wks.update_cell(cell.row, 6, kwargs['remark'])
 
-    elif query_type == "update_order_status":
+    elif query_type == "update_order_status": 
+        # อันนี้สำหรับแก้ทั้งบิล (ของเก่า)
         wks = sh.worksheet("Orders")
         cell_list = wks.findall(str(kwargs['oid']))
         col_status = 10
         for cell in cell_list:
             wks.update_cell(cell.row, col_status, kwargs['status'])
+
+    # 🟢 เพิ่มใหม่: แก้สถานะ "รายสินค้า" (Item by Item)
+    elif query_type == "update_order_item_status":
+        wks = sh.worksheet("Orders")
+        # 1. หาเลขบิลทั้งหมดก่อน
+        cell_list = wks.findall(str(kwargs['oid']))
+        col_code = 5    # คอลัมน์ E คือ Code
+        col_status = 10 # คอลัมน์ J คือ Status
+        
+        for cell in cell_list:
+            # 2. เช็คว่าบรรทัดนี้ใช่สินค้าที่ส่งมาไหม
+            # (ดึงค่าจาก Sheet มาเทียบ)
+            row_code = wks.cell(cell.row, col_code).value
+            if str(row_code).strip() == str(kwargs['code']).strip():
+                # 3. ถ้าใช่ ให้อัปเดตสถานะบรรทัดนี้
+                wks.update_cell(cell.row, col_status, kwargs['status'])
+                break # เจอแล้วหยุดหา (ประหยัดเวลา)
 
     elif query_type == "update_sale_report":
         wks = sh.worksheet("Sale_Reports")
@@ -155,7 +169,7 @@ def run_query(query_type, **kwargs):
             wks.update_cell(row, 7, kwargs['rem'])
             wks.update_cell(row, 9, kwargs['edit_count'])
             wks.update_cell(row, 10, str(datetime.datetime.now()))
-
+            
 def generate_doc_no():
     today = datetime.date.today()
     yy = today.strftime("%y")
@@ -579,103 +593,116 @@ def render_stock_order():
             else:
                 st.caption("ยังไม่มีประวัติการขาย")
 
-# 3. MANAGER APPROVE (Fix: ดึงชื่อสินค้าจาก Inventory มาโชว์ + กัน Error หัวตาราง)
+# 3. MANAGER APPROVE (Update: อนุมัติ/ไม่อนุมัติ รายการต่อรายการ)
 def render_manager():
     st.header("👔 Approval Dashboard")
     
-    # 1. ดึงข้อมูล Orders
     df = get_data("Orders")
     if df.empty: st.info("ไม่มีข้อมูล"); return
     
-    # Clean หัวตาราง
     df.columns = df.columns.str.strip()
     
-    # 2. ดึงข้อมูล Inventory (เพื่อเอามาหาชื่อสินค้า)
+    # Map ชื่อสินค้า
     df_inv = get_data("Inventory")
-    
-    # 🟢 แมพชื่อสินค้า (Code -> Name)
     if not df_inv.empty:
         df_inv['code'] = df_inv['code'].astype(str)
-        # สร้างดิกชันนารี {code: name}
         code_to_name = dict(zip(df_inv['code'], df_inv['name']))
-        # สร้างคอลัมน์ name ขึ้นมาใหม่ใน df (Orders) โดยเทียบจาก code
         df['name'] = df['code'].astype(str).map(code_to_name).fillna("ไม่พบชื่อสินค้า")
     else:
         df['name'] = "-"
 
-    # กรองเฉพาะรายการที่รอ Manager อนุมัติ
+    # กรองเฉพาะ Pending_Manager
     pending = df[df['status'] == 'Pending_Manager']
     
     if pending.empty:
         st.success("✅ ไม่มีรายการค้างอนุมัติ")
         return
     
-    # Group by Order ID
     order_groups = pending.groupby('id')
     
     for oid, items in order_groups:
-        # ดึงชื่อคนขายและลูกค้า (ใช้ iloc[0] เพื่อเอาบรรทัดแรกของกลุ่ม)
         sales_person = items.iloc[0]['sales_person'] if 'sales_person' in items.columns else "-"
         customer = items.iloc[0]['customer_name'] if 'customer_name' in items.columns else "-"
         
-        with st.expander(f"Order: {oid} | เซลล์: {sales_person} | ลูกค้า: {customer}"):
+        with st.expander(f"Order: {oid} | เซลล์: {sales_person} | ลูกค้า: {customer}", expanded=True):
             
-            # 🟢 เลือกคอลัมน์ที่จะโชว์ (เช็คก่อนว่ามีคอลัมน์จริงไหม กัน Error)
-            cols_to_show = ['code', 'name', 'qty', 'unit_price', 'total_price', 'price', 'total'] # ใส่เผื่อไว้ทั้งชื่อเก่าชื่อใหม่
-            valid_cols = [c for c in cols_to_show if c in items.columns]
+            # 🟢 สร้างตารางสำหรับแก้ไข (Data Editor)
+            # เพิ่มคอลัมน์ 'Decision' ให้เลือก
+            items_to_edit = items.copy()
+            items_to_edit['การตัดสินใจ'] = "รอพิจารณา" # ค่าเริ่มต้น
             
-            # แสดงตาราง (เอาเฉพาะคอลัมน์ที่มีจริง)
-            st.dataframe(items[valid_cols], use_container_width=True)
+            # เลือกคอลัมน์ที่จะแสดง
+            cols = ['code', 'name', 'qty', 'unit_price', 'total_price', 'การตัดสินใจ']
+            valid_cols = [c for c in cols if c in items_to_edit.columns]
             
-            c1, c2 = st.columns(2)
+            edited_df = st.data_editor(
+                items_to_edit[valid_cols],
+                column_config={
+                    "การตัดสินใจ": st.column_config.SelectboxColumn(
+                        "ผลการพิจารณา",
+                        options=["✅ อนุมัติ", "❌ ไม่อนุมัติ", "รอพิจารณา"],
+                        required=True,
+                        width="medium"
+                    ),
+                    "qty": st.column_config.NumberColumn("จำนวน", disabled=True),
+                    "unit_price": st.column_config.NumberColumn("ราคาขอ", disabled=True),
+                    "total_price": st.column_config.NumberColumn("รวม", disabled=True)
+                },
+                hide_index=True,
+                key=f"editor_{oid}",
+                use_container_width=True
+            )
             
-            # ✅ ปุ่มอนุมัติ
-            if c1.button("อนุมัติทั้งบิล", key=f"app_{oid}"):
-                run_query("update_order_status", oid=oid, status="Pending_SaleCO")
-                st.success("Approved! (ส่งต่อให้ Sale-CO)")
-                time.sleep(1)
-                st.rerun()
-            
-            # ❌ ปุ่มไม่อนุมัติ
-            if c2.button("ไม่อนุมัติ (Reject)", key=f"rej_{oid}"):
-                run_query("update_order_status", oid=oid, status="Rejected")
+            # ปุ่มยืนยัน
+            if st.button("💾 บันทึกผลการพิจารณา", key=f"save_{oid}", type="primary"):
                 
-                # ส่งเมลแจ้ง Sale-CO
-                try:
-                    subject = f"❌ แจ้งผล: ไม่อนุมัติราคาพิเศษ (Rejected) - {oid}"
-                    receivers = ["Chaiyakit@pacifictube.com"]
+                # ตัวแปรเก็บรายการเพื่อส่งเมล
+                rejected_items = []
+                approved_count = 0
+                
+                # Loop เช็คทีละบรรทัดจากตารางที่แก้แล้ว
+                for index, row in edited_df.iterrows():
+                    decision = row['การตัดสินใจ']
+                    code = row['code']
+                    name = row['name']
+                    qty = row['qty']
+                    price = row['unit_price'] if 'unit_price' in row else 0
                     
-                    items_html = ""
-                    for _, row in items.iterrows():
-                        p_name = row['name'] if 'name' in row else str(row['code'])
-                        qty_val = row['qty']
-                        # เช็คชื่อคอลัมน์ราคา (price หรือ unit_price)
-                        price_val = row['unit_price'] if 'unit_price' in row else row.get('price', 0)
+                    if decision == "✅ อนุมัติ":
+                        run_query("update_order_item_status", oid=oid, code=str(code), status="Pending_SaleCO")
+                        approved_count += 1
                         
-                        items_html += f"<li>{p_name} (จำนวน: {qty_val}) - ราคาขอ: {price_val}</li>"
-
-                    body = f"""
-                    <p>เรียน คุณชัยกิจ (Sale-CO),</p>
-                    <p>ผู้บริหารได้ทำการ <b>"ไม่อนุมัติ" (Reject)</b> รายการขอราคาพิเศษ ดังนี้:</p>
-                    <ul>
-                        <li><b>เลขที่เอกสาร:</b> {oid}</li>
-                        <li><b>ชื่อเซลล์:</b> {sales_person}</li>
-                        <li><b>ลูกค้า:</b> {customer}</li>
-                    </ul>
-                    <p><b>รายการที่ไม่ผ่าน:</b></p>
-                    <ul>{items_html}</ul>
-                    <hr>
-                    <p><b>⚠️ สิ่งที่ต้องทำ:</b></p>
-                    <p>รบกวนคุณชัยกิจ <b>โทรแจ้งเซลล์ ({sales_person}) โดยตรง</b> เพื่อแจ้งผลและหาวิธีการขายใหม่ครับ</p>
-                    """
-                    send_email_notification(receivers, subject, body)
-                    st.toast("📧 ส่งเมลแจ้ง Sale-CO ให้โทรหาเซลล์แล้ว")
-                except Exception as e:
-                    print(e)
-
-                st.error("Rejected! (บันทึกสถานะเรียบร้อย)")
-                time.sleep(1)
-                st.rerun()
+                    elif decision == "❌ ไม่อนุมัติ":
+                        run_query("update_order_item_status", oid=oid, code=str(code), status="Rejected")
+                        rejected_items.append(f"<li>{name} (จำนวน: {qty}) - ราคาขอ: {price}</li>")
+                
+                # --- ส่งเมลแจ้ง Sale-CO เฉพาะรายการที่ "ไม่ผ่าน" ---
+                if rejected_items:
+                    try:
+                        subject = f"❌ แจ้งผล: มีรายการไม่อนุมัติ (Rejected) - {oid}"
+                        receivers = ["Chaiyakit@pacifictube.com"]
+                        items_html = "".join(rejected_items)
+                        
+                        body = f"""
+                        <p>เรียน คุณชัยกิจ (Sale-CO),</p>
+                        <p>จากการพิจารณาออเดอร์ <b>{oid}</b> (เซลล์: {sales_person}) มีรายการที่ <b>"ไม่อนุมัติ"</b> ดังนี้:</p>
+                        <ul>{items_html}</ul>
+                        <p>ส่วนรายการอื่นๆ (ถ้ามี) ได้รับการอนุมัติเรียบร้อยแล้ว</p>
+                        <hr>
+                        <p><b>⚠️ สิ่งที่ต้องทำ:</b></p>
+                        <p>รบกวน <b>โทรแจ้งเซลล์ ({sales_person})</b> ถึงรายการที่ไม่ผ่านครับ</p>
+                        """
+                        send_email_notification(receivers, subject, body)
+                        st.toast("📧 ส่งเมลแจ้งรายการที่ถูกปัดตกเรียบร้อย")
+                    except Exception as e:
+                        print(e)
+                
+                if approved_count > 0 or len(rejected_items) > 0:
+                    st.success("✅ บันทึกข้อมูลเรียบร้อย!")
+                    time.sleep(1.5)
+                    st.rerun()
+                else:
+                    st.warning("⚠️ กรุณาเลือก 'อนุมัติ' หรือ 'ไม่อนุมัติ' อย่างน้อย 1 รายการ")
 
 # 4. SALE-CO (เหมือนเดิม)
 def render_saleco():
@@ -930,6 +957,7 @@ if check_password():
     elif "6." in selected: render_wh() # ถ้าเป็น Admin จะเข้าอันนี้
     elif "WH Admin" in selected: render_wh() # ถ้าเป็น user WH จะเข้าอันนี้ (ตามเงื่อนไขด้านบน)
     elif "Support" in selected: render_support()
+
 
 
 

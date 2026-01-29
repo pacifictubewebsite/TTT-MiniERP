@@ -905,9 +905,9 @@ def render_catalogue():
         else:
             st.error(f"❌ ไม่พบไฟล์: {img} (กรุณาตรวจสอบชื่อไฟล์ให้ถูกต้อง)")
 
-# 8. EXECUTIVE DASHBOARD (Fix: Auto-detect column names)
+# 8. EXECUTIVE DASHBOARD (Update: ตัดเรื่องเงินออก เน้นจำนวนของ)
 def render_dashboard():
-    st.header("📊 Executive Dashboard (ภาพรวมธุรกิจ)")
+    st.header("📊 Executive Dashboard (ภาพรวมการทำงาน)")
     
     # 1. ดึงข้อมูล
     df = get_data("Orders")
@@ -915,19 +915,9 @@ def render_dashboard():
         st.info("ยังไม่มีข้อมูลการขาย")
         return
 
-    # 🟢 Clean ชื่อคอลัมน์ (ตัดช่องว่างหน้าหลังทิ้งให้หมด)
+    # Clean ชื่อคอลัมน์
     df.columns = df.columns.str.strip()
     
-    # 🟢 Auto-Fix ชื่อคอลัมน์ (ถ้าเจอ total_price ให้เปลี่ยนเป็น total)
-    if 'total_price' in df.columns:
-        df.rename(columns={'total_price': 'total'}, inplace=True)
-    if 'Total' in df.columns:
-        df.rename(columns={'Total': 'total'}, inplace=True)
-    
-    # ถ้ายังไม่มี total อีก (กันเหนียว) ให้สร้างขึ้นมาเป็น 0
-    if 'total' not in df.columns:
-        df['total'] = 0
-
     # กรองเฉพาะออเดอร์ที่ "ขายได้จริง"
     valid_status = ['Completed', 'Reserved', 'Pending_SaleCO', 'Pending_Manager'] 
     if 'status' in df.columns:
@@ -940,40 +930,38 @@ def render_dashboard():
         st.warning("ไม่มียอดขายที่ active ในขณะนี้")
         return
 
-    # แปลงตัวเลข
-    df_valid['total'] = pd.to_numeric(df_valid['total'], errors='coerce').fillna(0)
+    # แปลงตัวเลข (เน้นแค่ Qty)
     df_valid['qty'] = pd.to_numeric(df_valid['qty'], errors='coerce').fillna(0)
     
-    # --- KPI CARDS ---
-    total_sales = df_valid['total'].sum()
-    total_orders = df_valid['id'].nunique()
-    total_items = df_valid['qty'].sum()
+    # --- 🟢 KPI CARDS (เน้นปริมาณงาน) ---
+    total_orders = df_valid['id'].nunique() # นับจำนวนบิล
+    total_items = df_valid['qty'].sum()     # นับจำนวนชิ้นสินค้า
     
+    # นับจำนวนบิลเดือนนี้
     today = datetime.date.today()
+    month_orders = 0
     if 'date' in df_valid.columns:
         df_valid['date'] = pd.to_datetime(df_valid['date'], errors='coerce')
         this_month = df_valid[df_valid['date'].dt.month == today.month]
-        month_sales = this_month['total'].sum()
-    else:
-        month_sales = 0
+        month_orders = this_month['id'].nunique()
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("💰 ยอดขายรวม", f"{total_sales:,.0f} ฿")
-    c2.metric("📅 ยอดขายเดือนนี้", f"{month_sales:,.0f} ฿")
-    c3.metric("📃 จำนวนบิล", f"{total_orders} ใบ")
-    c4.metric("📦 สินค้าออก (ชิ้น)", f"{total_items:,.0f}")
+    # โชว์แค่ 3 ช่องพอ (ตัดยอดเงินออก)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("📃 บิลทั้งหมด (Total Orders)", f"{total_orders} ใบ")
+    c2.metric("📅 บิลเดือนนี้ (This Month)", f"{month_orders} ใบ")
+    c3.metric("📦 สินค้าที่ขายออก (Total Qty)", f"{total_items:,.0f} ชิ้น")
     
     st.divider()
 
-    # --- CHARTS ---
+    # --- 🟢 CHARTS (กราฟ) ---
     col_chart1, col_chart2 = st.columns(2)
     
     with col_chart1:
-        st.subheader("🏆 5 อันดับ สินค้าขายดี")
+        st.subheader("🏆 5 สินค้าขายดี (Top Products)")
         # Map ชื่อสินค้า
         df_inv = get_data("Inventory")
         if not df_inv.empty:
-            df_inv.columns = df_inv.columns.str.strip() # Clean Inventory columns too
+            df_inv.columns = df_inv.columns.str.strip()
             df_inv['code'] = df_inv['code'].astype(str)
             if 'name' in df_inv.columns:
                 code_map = dict(zip(df_inv['code'], df_inv['name']))
@@ -983,19 +971,21 @@ def render_dashboard():
         else:
             df_valid['product_name'] = df_valid['code']
 
+        # กราฟแท่ง: สินค้าไหนออกเยอะสุด (By Qty)
         top_products = df_valid.groupby('product_name')['qty'].sum().sort_values(ascending=False).head(5)
-        st.bar_chart(top_products, color="#FF4B4B")
+        st.bar_chart(top_products, color="#FF4B4B") # สีแดง
 
     with col_chart2:
-        st.subheader("👨‍💼 ยอดขายแบ่งตามเซลล์")
+        st.subheader("💪 ผลงานทีมขาย (By Items Sold)")
         if 'sales_person' in df_valid.columns:
-            sales_perf = df_valid.groupby('sales_person')['total'].sum().sort_values(ascending=False)
-            st.bar_chart(sales_perf, color="#29B5E8")
+            # เปลี่ยนจากยอดเงิน เป็น "จำนวนชิ้น" ที่ขายได้
+            sales_perf = df_valid.groupby('sales_person')['qty'].sum().sort_values(ascending=False)
+            st.bar_chart(sales_perf, color="#29B5E8") # สีฟ้า
         else:
             st.info("ไม่พบคอลัมน์ sales_person")
 
     st.caption(f"Update: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
-
+    
 # 9. CANCEL ORDER (Fix: เลือกโชว์เฉพาะคอลัมน์ที่มีอยู่จริง กัน Error)
 def render_cancel():
     st.header("🚫 Cancel Order (ยกเลิกรายการ)")
@@ -1108,6 +1098,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

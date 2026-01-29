@@ -686,6 +686,21 @@ def render_support():
         st.link_button("🍽️ ร้านอาหารใกล้ฉัน", "https://www.google.com/maps/search/restaurants+near+me", use_container_width=True)
         st.link_button("🏥 โรงพยาบาลใกล้ฉัน", "https://www.google.com/maps/search/hospitals+near+me", use_container_width=True)
 
+# 7. PRODUCT CATALOGUE (New!)
+def render_catalogue():
+    st.header("📖 Product Catalogue 2025")
+    st.info("ℹ️ เลื่อนลงด้านล่างเพื่อดูรายละเอียดสินค้าทั้งหมด")
+    
+    # ชื่อไฟล์ต้องตรงกับที่อัปโหลดเป๊ะๆ นะครับ
+    image_files = ["1_หน้าปก.jpg", "2_หน้า2.jpg", "3_หน้า3.jpg", "4_หน้า4.jpg"]
+    
+    for img in image_files:
+        if os.path.exists(img):
+            st.image(img, use_container_width=True) # ปรับขนาดเต็มจออัตโนมัติ
+            st.write("---") # เส้นขีดคั่นแต่ละหน้า
+        else:
+            st.error(f"❌ ไม่พบไฟล์: {img} (กรุณาตรวจสอบชื่อไฟล์ให้ถูกต้อง)")
+
 # ==========================================
 # 🚀 MAIN APP LOGIC
 # ==========================================
@@ -694,27 +709,32 @@ if check_password():
     user = st.session_state['user_name']
     
     with st.sidebar:
-        # 🟢 ส่วนที่เพิ่ม: โชว์โลโก้บนหัวเมนู
+        # (ส่วนโลโก้เดิมของบอส)
         if os.path.exists("images.png"):
-            st.image("images.png", use_container_width=True) # ให้มันขยายเต็มความกว้างเมนู
+            st.image("images.png", use_container_width=True)
             
         st.title(f"👤 {user}")
         st.caption(f"Role: {role}")
         st.divider()
+        
         options = []
         if role == 'WH':
             options = ["5. WH Admin", "6. Support (ช่วยเหลือ)"]
         else:
+            # เพิ่มเมนูแคตตาล็อกให้ทุกคนเห็น (ยกเว้น WH อาจจะไม่จำเป็น หรือให้เห็นก็ได้แล้วแต่บอส)
             if role in ['Admin', 'GM', 'CCO', 'Sale-CO', 'Sale']:
                 options.append("1. Sale Report")
                 options.append("2. Stock & Order")
+                options.append("3. Catalogue (ดูสินค้า)") # 🟢 เพิ่มตรงนี้ครับ
+            
             if role in ['Admin', 'GM']:
-                options.append("3. Manager Approve")
+                options.append("4. Manager Approve") # เลื่อนเลขเป็น 4
             if role in ['Admin', 'Sale-CO']:
-                options.append("4. Sale-CO (Confirm Reserve)")
+                options.append("5. Sale-CO (Confirm Reserve)") # เลื่อนเลขเป็น 5
             if role == 'Admin':
-                options.append("5. WH Admin")
-            options.append("6. Support (ช่วยเหลือ)")
+                options.append("6. WH Admin") # เลื่อนเลขเป็น 6
+            
+            options.append("7. Support (ช่วยเหลือ)") # เลื่อนเลขเป็น 7
 
         if options:
             selected = st.radio("เมนูใช้งาน", options)
@@ -724,11 +744,15 @@ if check_password():
             st.error("Access Denied")
             if st.button("Logout"): logout()
 
+    # Router (ตัวแยกทางเดิน)
     if "1." in selected: render_sale_report()
     elif "2." in selected: render_stock_order()
-    elif "3." in selected: render_manager()
-    elif "4." in selected: render_saleco()
-    elif "5." in selected: render_wh()
-    elif "6." in selected: render_support()
+    elif "3." in selected: render_catalogue() # 🟢 เพิ่มทางเดินให้ Catalogue
+    elif "4." in selected: render_manager()
+    elif "5." in selected: render_saleco()
+    elif "6." in selected: render_wh() # ถ้าเป็น Admin จะเข้าอันนี้
+    elif "WH Admin" in selected: render_wh() # ถ้าเป็น user WH จะเข้าอันนี้ (ตามเงื่อนไขด้านบน)
+    elif "Support" in selected: render_support()
+
 
 

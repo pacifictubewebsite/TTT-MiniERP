@@ -12,6 +12,38 @@ try:
 except ImportError:
     st.error("⚠️ ยังไม่ได้ติดตั้ง 'streamlit-js-eval' ใน requirements.txt")
 
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+# ==========================================
+# 📧 EMAIL CONFIGURATION
+# ==========================================
+# ⚠️ สำคัญ: ต้องเป็น Gmail ที่เปิด App Password แล้ว
+SENDER_EMAIL = "kitibodee28@gmail.com"  # 🔴 แก้เป็นเมลที่สมัครไว้
+SENDER_PASSWORD = "vwfj mask pwfi cpur"      # 🔴 แก้เป็นรหัส App Password 16 หลัก
+
+def send_email_notification(to_emails, subject, body_html):
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = ", ".join(to_emails) # รองรับส่งหาหลายคน
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(body_html, 'html')) # ใช้ HTML เพื่อจัดรูปแบบสวยๆ
+
+        # เชื่อมต่อ Server Gmail
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        text = msg.as_string()
+        server.sendmail(SENDER_EMAIL, to_emails, text)
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"Email Error: {e}") # ดู Log ใน Terminal ถ้าส่งไม่ได้
+        return False
+
 # ==========================================
 # ⚙️ CONFIG & SECURITY
 # ==========================================
@@ -390,17 +422,22 @@ def render_sale_report():
                             st.session_state['edit_data'] = row.to_dict()
                             st.rerun()
 
-# 2. STOCK & ORDER (เหมือนเดิม)
+# 2. STOCK & ORDER (Update: Email Notification)
 def render_stock_order():
     st.header("🛒 Check Stock & Open Order (ระบบตะกร้า)")
-    if 'cart' not in st.session_state: st.session_state['cart'] = []
+    
+    if 'cart' not in st.session_state:
+        st.session_state['cart'] = []
+    
     df = get_data("Inventory")
     if df.empty: st.warning("Stock Data Not Found"); return
+    
     df_ord = get_data("Orders")
     if not df_ord.empty:
         df_ord.columns = df_ord.columns.str.strip()
         if 'customer_name' not in df_ord.columns and 'customer' in df_ord.columns:
             df_ord.rename(columns={'customer': 'customer_name'}, inplace=True)
+
     reserved = pd.DataFrame()
     if not df_ord.empty:
         active_status = ['Pending_Manager', 'Pending_SaleCO', 'Reserved']
@@ -409,61 +446,166 @@ def render_stock_order():
             if not pending.empty:
                 reserved = pending.groupby('code')['qty'].sum().reset_index()
                 reserved.columns = ['code', 'reserved_qty']
+    
     df['code'] = df['code'].astype(str)
     if not reserved.empty:
         reserved['code'] = reserved['code'].astype(str)
         df = pd.merge(df, reserved, on='code', how='left')
-    else: df['reserved_qty'] = 0
+    else:
+        df['reserved_qty'] = 0
     df['reserved_qty'] = df['reserved_qty'].fillna(0)
     df['available'] = df['real_stock'] - df['reserved_qty']
+
     search = st.text_input("🔍 ค้นหาสินค้า")
     if search:
         mask = df['name'].astype(str).str.contains(search, case=False) | df['code'].astype(str).str.contains(search, case=False)
         df = df[mask]
-    event = st.dataframe(df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], column_config={"real_stock": "Stock", "reserved_qty": "Jong", "available": "Ready", "unit": "หน่วยนับ"}, use_container_width=True, on_select="rerun", selection_mode="single-row")
+
+    event = st.dataframe(
+        df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], 
+        column_config={
+            "real_stock": "Stock", 
+            "reserved_qty": "Jong", 
+            "available": "Ready",
+            "unit": "หน่วยนับ"
+        },
+        use_container_width=True, on_select="rerun", selection_mode="single-row"
+    )
+
     if event.selection.rows:
         item = df.iloc[event.selection.rows[0]]
         st.divider()
         st.subheader(f"➕ เพิ่มลงตะกร้า: {item['name']}")
+        
         c1, c2 = st.columns(2)
         qty = c1.number_input(f"จำนวน ({item['unit']})", min_value=1, value=1)
         ptype = c2.radio("ราคา", ["Normal", "Special"])
+        
         price = 0.0
         if ptype == "Special":
             price = st.number_input("ระบุราคาพิเศษ", min_value=0.0)
             st.warning("⚠️ ราคาพิเศษต้องรออนุมัติ")
+
         if st.button("🛒 ใส่ตะกร้า", type="primary"):
-            cart_item = {"code": item['code'], "name": item['name'], "qty": qty, "unit": item['unit'], "price": price, "type": ptype, "total": qty * price if ptype == "Special" else 0}
+            cart_item = {
+                "code": item['code'],
+                "name": item['name'],
+                "qty": qty,
+                "unit": item['unit'],
+                "price": price,
+                "type": ptype,
+                "total": qty * price if ptype == "Special" else 0
+            }
             st.session_state['cart'].append(cart_item)
             st.success(f"เพิ่ม {item['name']} จำนวน {qty} ลงตะกร้าแล้ว!")
             time.sleep(0.5)
             st.rerun()
+
     st.divider()
     st.subheader(f"🛒 ตะกร้าสินค้า ({len(st.session_state['cart'])})")
+    
     if st.session_state['cart']:
         cart_df = pd.DataFrame(st.session_state['cart'])
         st.dataframe(cart_df, use_container_width=True)
+        
         if st.button("❌ ล้างตะกร้า"):
             st.session_state['cart'] = []
             st.rerun()
+
         st.write("---")
         st.write("🚀 **ยืนยันการสั่งซื้อ**")
         c1, c2 = st.columns(2)
         s_name = c1.text_input("ชื่อเซลล์", value=st.session_state['user_name'], disabled=True)
         c_name = c2.text_input("ชื่อลูกค้า (Customer)")
+
         if st.button("✅ ยืนยันออเดอร์ (Confirm Order)", type="primary"):
             if c_name:
                 so_id = generate_so_no()
+                
+                # ตัวแปรสำหรับตรวจสอบเงื่อนไขส่งเมล
+                has_special = False
+                items_html_list = ""
+                
                 for item in st.session_state['cart']:
                     status = "Pending_Manager" if item['type'] == "Special" else "Pending_SaleCO"
-                    row = [so_id, str(datetime.date.today()), s_name, c_name, item['code'], item['qty'], item['price'], item['total'], item['type'], status]
+                    
+                    if item['type'] == "Special":
+                        has_special = True
+                        
+                    # สร้างรายการสินค้าแบบ HTML สำหรับใส่ในเมล
+                    price_txt = f"ราคาขออนุมัติ: {item['price']:,} บาท" if item['type'] == "Special" else "ราคา: ปกติ"
+                    items_html_list += f"<li><b>สินค้า:</b> {item['name']} (Code: {item['code']}) <br> <b>จำนวน:</b> {item['qty']} {item['unit']} | {price_txt}</li>"
+                    
+                    row = [
+                        so_id, str(datetime.date.today()), s_name, c_name, item['code'], 
+                        item['qty'], item['price'], item['total'], item['type'], status
+                    ]
                     append_data("Orders", row)
+                
+                # --- 📧 LOGIC การส่งเมล (Email Automation) ---
+                if has_special:
+                    # 🔴 กรณีมีขอราคาพิเศษ -> ส่งหา GM & CCO
+                    subject = f"🔥 ขออนุมัติราคาพิเศษ (Special Price Request) - {so_id}"
+                    receivers = ["jitpanu@pacifictube.com", "theerapon@hosecenter.co.th"]
+                    
+                    body = f"""
+                    <p>เรียน คุณจิตภาณุ (GM) และ คุณธีรพล (CCO),</p>
+                    <p>มีรายการขออนุมัติราคาพิเศษจากฝ่ายขาย โดยมีรายละเอียดดังนี้:</p>
+                    <ul>
+                        <li><b>เลขที่เอกสาร:</b> {so_id}</li>
+                        <li><b>ชื่อเซลล์ผู้ขอ:</b> {s_name}</li>
+                        <li><b>ลูกค้า/ร้านค้า:</b> {c_name}</li>
+                    </ul>
+                    <p><b>รายการสินค้าที่ขอราคาพิเศษ:</b></p>
+                    <ul>
+                        {items_html_list}
+                    </ul>
+                    <hr>
+                    <p><b>⚠️ การดำเนินการ:</b></p>
+                    <p>ขณะนี้ระบบยังไม่รองรับการอนุมัติผ่านอีเมล รบกวนท่าน<b>เข้าสู่ระบบ TTT Mini ERP</b> เพื่อตรวจสอบและกดอนุมัติรายการครับ</p>
+                    <p>จึงเรียนมาเพื่อโปรดพิจารณา</p>
+                    <p>ขอแสดงความนับถือ<br>ระบบแจ้งเตือนอัตโนมัติ (TTT Mini ERP)</p>
+                    """
+                    send_email_notification(receivers, subject, body)
+                    st.toast("📧 ส่งอีเมลแจ้ง GM/CCO เรียบร้อยแล้ว!")
+                    
+                else:
+                    # 🟢 กรณีราคาปกติล้วน -> ส่งหา Sale-CO
+                    subject = f"📦 แจ้งเตือนออเดอร์ใหม่ (New Order) - {so_id}"
+                    receivers = ["Chaiyakit@pacifictube.com"]
+                    
+                    body = f"""
+                    <p>เรียน คุณชัยกิจ (Sale-CO),</p>
+                    <p>มีรายการสั่งซื้อสินค้าใหม่เข้ามาในระบบ รายละเอียดดังนี้:</p>
+                    <ul>
+                        <li><b>เลขที่เอกสาร:</b> {so_id}</li>
+                        <li><b>ชื่อเซลล์:</b> {s_name}</li>
+                        <li><b>ลูกค้า:</b> {c_name}</li>
+                    </ul>
+                    <p><b>รายการสินค้า:</b></p>
+                    <ul>
+                        {items_html_list}
+                    </ul>
+                    <hr>
+                    <p><b>⚠️ การดำเนินการ:</b></p>
+                    <p>รบกวนท่าน<b>เข้าสู่ระบบ TTT Mini ERP</b> เพื่อตรวจสอบและกดปุ่ม "ยืนยันจองของ (Reserved)" เพื่อส่งต่อให้คลังสินค้าดำเนินการครับ</p>
+                    <p>จึงเรียนมาเพื่อทราบและดำเนินการ</p>
+                    <p>ขอแสดงความนับถือ<br>ระบบแจ้งเตือนอัตโนมัติ (TTT Mini ERP)</p>
+                    """
+                    send_email_notification(receivers, subject, body)
+                    st.toast("📧 ส่งอีเมลแจ้ง Sale-CO เรียบร้อยแล้ว!")
+                
+                # ---------------------------------------------
+
                 st.success(f"🎉 เปิดบิลสำเร็จ! เลขที่: {so_id}")
                 st.session_state['cart'] = []
                 time.sleep(2)
                 st.rerun()
-            else: st.error("กรุณาระบุชื่อลูกค้า")
-    else: st.info("ตะกร้ายังว่างอยู่ เลือกสินค้าด้านบนได้เลย")
+            else:
+                st.error("กรุณาระบุชื่อลูกค้า")
+    else:
+        st.info("ตะกร้ายังว่างอยู่ เลือกสินค้าด้านบนได้เลย")
+
     st.write("---")
     with st.expander("📜 ประวัติการเปิดบิลของฉัน (My Sale History)"):
         if not df_ord.empty:
@@ -474,8 +616,10 @@ def render_stock_order():
                     cols_to_show = ['id', 'date', 'customer_name', 'code', 'qty', 'status']
                     valid_cols = [c for c in cols_to_show if c in my_history.columns]
                     st.dataframe(my_history[valid_cols], use_container_width=True)
-                else: st.caption("ยังไม่มีประวัติการขาย")
-            else: st.error("⚠️ ไม่พบคอลัมน์ 'sales_person' ใน Sheet Orders")
+                else:
+                    st.caption("ยังไม่มีประวัติการขาย")
+            else:
+                st.error("⚠️ ไม่พบคอลัมน์ 'sales_person' ใน Sheet Orders กรุณาเช็คหัวตาราง")
 
 # 3. MANAGER APPROVE (เหมือนเดิม)
 def render_manager():
@@ -753,6 +897,7 @@ if check_password():
     elif "6." in selected: render_wh() # ถ้าเป็น Admin จะเข้าอันนี้
     elif "WH Admin" in selected: render_wh() # ถ้าเป็น user WH จะเข้าอันนี้ (ตามเงื่อนไขด้านบน)
     elif "Support" in selected: render_support()
+
 
 
 

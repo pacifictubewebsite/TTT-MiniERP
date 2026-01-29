@@ -99,12 +99,19 @@ def get_gsheet_client():
 def get_data(worksheet_name):
     client = get_gsheet_client()
     if client:
-        try:
-            sh = client.open(SHEET_NAME)
-            wks = sh.worksheet(worksheet_name)
-            data = wks.get_all_records()
-            return pd.DataFrame(data)
-        except: return pd.DataFrame()
+        # 🔄 ลองดึงข้อมูล 3 ครั้ง (ถ้าครั้งแรกพลาด ให้ลองใหม่)
+        for attempt in range(3):
+            try:
+                sh = client.open(SHEET_NAME)
+                wks = sh.worksheet(worksheet_name)
+                data = wks.get_all_records()
+                # ถ้าดึงสำเร็จ ส่งข้อมูลกลับทันที
+                return pd.DataFrame(data)
+            except Exception as e:
+                # ถ้าพลาด ให้รอ 1 วินาทีแล้วลองใหม่
+                time.sleep(1)
+                continue
+    # ถ้าลอง 3 รอบแล้วยังไม่ได้จริงๆ ค่อยยอมแพ้
     return pd.DataFrame()
 
 def append_data(worksheet_name, row_list):
@@ -422,16 +429,24 @@ def render_sale_report():
                             st.session_state['edit_data'] = row.to_dict()
                             st.rerun()
 
-# 2. STOCK & ORDER (Update: Email Notification)
+# 2. STOCK & ORDER (Update: เพิ่มปุ่ม Refresh แก้ปัญหาหน้าค้าง)
 def render_stock_order():
     st.header("🛒 Check Stock & Open Order (ระบบตะกร้า)")
     
     if 'cart' not in st.session_state:
         st.session_state['cart'] = []
     
+    # 🟢 1. ดึง Inventory
     df = get_data("Inventory")
-    if df.empty: st.warning("Stock Data Not Found"); return
     
+    # 🚨 ถ้าดึงไม่เจอ ให้ขึ้นปุ่ม Refresh แทนการโชว์ Error สีเหลืองเฉยๆ
+    if df.empty:
+        st.warning("⚠️ โหลดข้อมูล Stock ไม่สำเร็จ (ระบบอาจกำลังบันทึกข้อมูล)")
+        if st.button("🔄 กดตรงนี้เพื่อโหลดใหม่ (Refresh)", type="primary"):
+            st.rerun()
+        return # หยุดการทำงานแค่นี้ รอคนกดปุ่ม
+    
+    # 🟢 2. ดึง Orders
     df_ord = get_data("Orders")
     if not df_ord.empty:
         df_ord.columns = df_ord.columns.str.strip()
@@ -456,6 +471,7 @@ def render_stock_order():
     df['reserved_qty'] = df['reserved_qty'].fillna(0)
     df['available'] = df['real_stock'] - df['reserved_qty']
 
+    # --- ส่วนค้นหาและแสดงผล ---
     search = st.text_input("🔍 ค้นหาสินค้า")
     if search:
         mask = df['name'].astype(str).str.contains(search, case=False) | df['code'].astype(str).str.contains(search, case=False)
@@ -522,17 +538,14 @@ def render_stock_order():
             if c_name:
                 so_id = generate_so_no()
                 
-                # ตัวแปรสำหรับตรวจสอบเงื่อนไขส่งเมล
                 has_special = False
                 items_html_list = ""
                 
+                # 🟡 1. บันทึกข้อมูลลง Google Sheets
                 for item in st.session_state['cart']:
                     status = "Pending_Manager" if item['type'] == "Special" else "Pending_SaleCO"
                     
-                    if item['type'] == "Special":
-                        has_special = True
-                        
-                    # สร้างรายการสินค้าแบบ HTML สำหรับใส่ในเมล
+                    if item['type'] == "Special": has_special = True
                     price_txt = f"ราคาขออนุมัติ: {item['price']:,} บาท" if item['type'] == "Special" else "ราคา: ปกติ"
                     items_html_list += f"<li><b>สินค้า:</b> {item['name']} (Code: {item['code']}) <br> <b>จำนวน:</b> {item['qty']} {item['unit']} | {price_txt}</li>"
                     
@@ -542,64 +555,38 @@ def render_stock_order():
                     ]
                     append_data("Orders", row)
                 
-                # --- 📧 LOGIC การส่งเมล (Email Automation) ---
-                if has_special:
-                    # 🔴 กรณีมีขอราคาพิเศษ -> ส่งหา GM & CCO
-                    subject = f"🔥 ขออนุมัติราคาพิเศษ (Special Price Request) - {so_id}"
-                    receivers = ["jitpanu@pacifictube.com", "theerapon@hosecenter.co.th"]
-                    
-                    body = f"""
-                    <p>เรียน คุณจิตภาณุ (GM) และ คุณธีรพล (CCO),</p>
-                    <p>มีรายการขออนุมัติราคาพิเศษจากฝ่ายขาย โดยมีรายละเอียดดังนี้:</p>
-                    <ul>
-                        <li><b>เลขที่เอกสาร:</b> {so_id}</li>
-                        <li><b>ชื่อเซลล์ผู้ขอ:</b> {s_name}</li>
-                        <li><b>ลูกค้า/ร้านค้า:</b> {c_name}</li>
-                    </ul>
-                    <p><b>รายการสินค้าที่ขอราคาพิเศษ:</b></p>
-                    <ul>
-                        {items_html_list}
-                    </ul>
-                    <hr>
-                    <p><b>⚠️ การดำเนินการ:</b></p>
-                    <p>ขณะนี้ระบบยังไม่รองรับการอนุมัติผ่านอีเมล รบกวนท่าน<b>เข้าสู่ระบบ TTT Mini ERP</b> เพื่อตรวจสอบและกดอนุมัติรายการครับ</p>
-                    <p>จึงเรียนมาเพื่อโปรดพิจารณา</p>
-                    <p>ขอแสดงความนับถือ<br>ระบบแจ้งเตือนอัตโนมัติ (TTT Mini ERP)</p>
-                    """
-                    send_email_notification(receivers, subject, body)
-                    st.toast("📧 ส่งอีเมลแจ้ง GM/CCO เรียบร้อยแล้ว!")
-                    
-                else:
-                    # 🟢 กรณีราคาปกติล้วน -> ส่งหา Sale-CO
-                    subject = f"📦 แจ้งเตือนออเดอร์ใหม่ (New Order) - {so_id}"
-                    receivers = ["Chaiyakit@pacifictube.com"]
-                    
-                    body = f"""
-                    <p>เรียน คุณชัยกิจ (Sale-CO),</p>
-                    <p>มีรายการสั่งซื้อสินค้าใหม่เข้ามาในระบบ รายละเอียดดังนี้:</p>
-                    <ul>
-                        <li><b>เลขที่เอกสาร:</b> {so_id}</li>
-                        <li><b>ชื่อเซลล์:</b> {s_name}</li>
-                        <li><b>ลูกค้า:</b> {c_name}</li>
-                    </ul>
-                    <p><b>รายการสินค้า:</b></p>
-                    <ul>
-                        {items_html_list}
-                    </ul>
-                    <hr>
-                    <p><b>⚠️ การดำเนินการ:</b></p>
-                    <p>รบกวนท่าน<b>เข้าสู่ระบบ TTT Mini ERP</b> เพื่อตรวจสอบและกดปุ่ม "ยืนยันจองของ (Reserved)" เพื่อส่งต่อให้คลังสินค้าดำเนินการครับ</p>
-                    <p>จึงเรียนมาเพื่อทราบและดำเนินการ</p>
-                    <p>ขอแสดงความนับถือ<br>ระบบแจ้งเตือนอัตโนมัติ (TTT Mini ERP)</p>
-                    """
-                    send_email_notification(receivers, subject, body)
-                    st.toast("📧 ส่งอีเมลแจ้ง Sale-CO เรียบร้อยแล้ว!")
-                
-                # ---------------------------------------------
+                # 🟡 2. ส่งอีเมล (ถ้าตั้งค่าไว้)
+                try:
+                    if has_special:
+                        subject = f"🔥 ขออนุมัติราคาพิเศษ (Special Price Request) - {so_id}"
+                        receivers = ["jitpanu@pacifictube.com", "theerapon@hosecenter.co.th"]
+                        body = f"""
+                        <p>เรียน คุณจิตภาณุ (GM) และ คุณธีรพล (CCO),</p>
+                        <p>มีรายการขออนุมัติราคาพิเศษจากฝ่ายขาย โดยมีรายละเอียดดังนี้:</p>
+                        <ul><li><b>เลขที่เอกสาร:</b> {so_id}</li><li><b>ชื่อเซลล์ผู้ขอ:</b> {s_name}</li><li><b>ลูกค้า/ร้านค้า:</b> {c_name}</li></ul>
+                        <p><b>รายการสินค้าที่ขอราคาพิเศษ:</b></p><ul>{items_html_list}</ul>
+                        <hr><p><b>⚠️ การดำเนินการ:</b></p><p>รบกวนท่าน<b>เข้าสู่ระบบ TTT Mini ERP</b> เพื่อตรวจสอบและกดอนุมัติรายการครับ</p>
+                        """
+                        send_email_notification(receivers, subject, body)
+                    else:
+                        subject = f"📦 แจ้งเตือนออเดอร์ใหม่ (New Order) - {so_id}"
+                        receivers = ["Chaiyakit@pacifictube.com"]
+                        body = f"""
+                        <p>เรียน คุณชัยกิจ (Sale-CO),</p>
+                        <p>มีรายการสั่งซื้อสินค้าใหม่เข้ามาในระบบ รายละเอียดดังนี้:</p>
+                        <ul><li><b>เลขที่เอกสาร:</b> {so_id}</li><li><b>ชื่อเซลล์:</b> {s_name}</li><li><b>ลูกค้า:</b> {c_name}</li></ul>
+                        <p><b>รายการสินค้า:</b></p><ul>{items_html_list}</ul>
+                        <hr><p><b>⚠️ การดำเนินการ:</b></p><p>รบกวนท่าน<b>เข้าสู่ระบบ TTT Mini ERP</b> เพื่อตรวจสอบและกดปุ่ม "ยืนยันจองของ (Reserved)" ครับ</p>
+                        """
+                        send_email_notification(receivers, subject, body)
+                except:
+                    pass # ถ้าส่งเมลไม่ผ่าน ก็ปล่อยผ่านไปก่อน ไม่ให้ระบบค้าง
 
                 st.success(f"🎉 เปิดบิลสำเร็จ! เลขที่: {so_id}")
                 st.session_state['cart'] = []
-                time.sleep(2)
+                
+                # 🛑 ชะลอเวลาสัก 2 วินาที เพื่อให้ Google Sheet บันทึกเสร็จทัน
+                time.sleep(2) 
                 st.rerun()
             else:
                 st.error("กรุณาระบุชื่อลูกค้า")
@@ -618,8 +605,6 @@ def render_stock_order():
                     st.dataframe(my_history[valid_cols], use_container_width=True)
                 else:
                     st.caption("ยังไม่มีประวัติการขาย")
-            else:
-                st.error("⚠️ ไม่พบคอลัมน์ 'sales_person' ใน Sheet Orders กรุณาเช็คหัวตาราง")
 
 # 3. MANAGER APPROVE (เหมือนเดิม)
 def render_manager():
@@ -897,6 +882,7 @@ if check_password():
     elif "6." in selected: render_wh() # ถ้าเป็น Admin จะเข้าอันนี้
     elif "WH Admin" in selected: render_wh() # ถ้าเป็น user WH จะเข้าอันนี้ (ตามเงื่อนไขด้านบน)
     elif "Support" in selected: render_support()
+
 
 
 

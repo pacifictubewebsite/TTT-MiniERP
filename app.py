@@ -579,12 +579,30 @@ def render_stock_order():
             else:
                 st.caption("ยังไม่มีประวัติการขาย")
 
-# 3. MANAGER APPROVE (Update: Reject -> Email Sale-CO)
+# 3. MANAGER APPROVE (Fix: ดึงชื่อสินค้าจาก Inventory มาโชว์ + กัน Error หัวตาราง)
 def render_manager():
     st.header("👔 Approval Dashboard")
+    
+    # 1. ดึงข้อมูล Orders
     df = get_data("Orders")
     if df.empty: st.info("ไม่มีข้อมูล"); return
     
+    # Clean หัวตาราง
+    df.columns = df.columns.str.strip()
+    
+    # 2. ดึงข้อมูล Inventory (เพื่อเอามาหาชื่อสินค้า)
+    df_inv = get_data("Inventory")
+    
+    # 🟢 แมพชื่อสินค้า (Code -> Name)
+    if not df_inv.empty:
+        df_inv['code'] = df_inv['code'].astype(str)
+        # สร้างดิกชันนารี {code: name}
+        code_to_name = dict(zip(df_inv['code'], df_inv['name']))
+        # สร้างคอลัมน์ name ขึ้นมาใหม่ใน df (Orders) โดยเทียบจาก code
+        df['name'] = df['code'].astype(str).map(code_to_name).fillna("ไม่พบชื่อสินค้า")
+    else:
+        df['name'] = "-"
+
     # กรองเฉพาะรายการที่รอ Manager อนุมัติ
     pending = df[df['status'] == 'Pending_Manager']
     
@@ -596,35 +614,45 @@ def render_manager():
     order_groups = pending.groupby('id')
     
     for oid, items in order_groups:
-        sales_person = items.iloc[0]['sales_person']
-        customer = items.iloc[0]['customer_name']
+        # ดึงชื่อคนขายและลูกค้า (ใช้ iloc[0] เพื่อเอาบรรทัดแรกของกลุ่ม)
+        sales_person = items.iloc[0]['sales_person'] if 'sales_person' in items.columns else "-"
+        customer = items.iloc[0]['customer_name'] if 'customer_name' in items.columns else "-"
         
         with st.expander(f"Order: {oid} | เซลล์: {sales_person} | ลูกค้า: {customer}"):
-            st.dataframe(items[['code', 'name', 'qty', 'unit_price', 'total_price']])
+            
+            # 🟢 เลือกคอลัมน์ที่จะโชว์ (เช็คก่อนว่ามีคอลัมน์จริงไหม กัน Error)
+            cols_to_show = ['code', 'name', 'qty', 'unit_price', 'total_price', 'price', 'total'] # ใส่เผื่อไว้ทั้งชื่อเก่าชื่อใหม่
+            valid_cols = [c for c in cols_to_show if c in items.columns]
+            
+            # แสดงตาราง (เอาเฉพาะคอลัมน์ที่มีจริง)
+            st.dataframe(items[valid_cols], use_container_width=True)
             
             c1, c2 = st.columns(2)
             
-            # ✅ ปุ่มอนุมัติ (เหมือนเดิม)
+            # ✅ ปุ่มอนุมัติ
             if c1.button("อนุมัติทั้งบิล", key=f"app_{oid}"):
                 run_query("update_order_status", oid=oid, status="Pending_SaleCO")
                 st.success("Approved! (ส่งต่อให้ Sale-CO)")
                 time.sleep(1)
                 st.rerun()
             
-            # ❌ ปุ่มไม่อนุมัติ (เพิ่มส่งเมลหา Sale-CO)
+            # ❌ ปุ่มไม่อนุมัติ
             if c2.button("ไม่อนุมัติ (Reject)", key=f"rej_{oid}"):
-                # 1. อัปเดตสถานะเป็น Rejected
                 run_query("update_order_status", oid=oid, status="Rejected")
                 
-                # 2. ส่งเมลหา Sale-CO ให้โทรแจ้งเซลล์
+                # ส่งเมลแจ้ง Sale-CO
                 try:
                     subject = f"❌ แจ้งผล: ไม่อนุมัติราคาพิเศษ (Rejected) - {oid}"
                     receivers = ["Chaiyakit@pacifictube.com"]
                     
-                    # รายการสินค้า
                     items_html = ""
                     for _, row in items.iterrows():
-                        items_html += f"<li>{row['name']} (จำนวน: {row['qty']}) - ราคาขอ: {row['unit_price']:,}</li>"
+                        p_name = row['name'] if 'name' in row else str(row['code'])
+                        qty_val = row['qty']
+                        # เช็คชื่อคอลัมน์ราคา (price หรือ unit_price)
+                        price_val = row['unit_price'] if 'unit_price' in row else row.get('price', 0)
+                        
+                        items_html += f"<li>{p_name} (จำนวน: {qty_val}) - ราคาขอ: {price_val}</li>"
 
                     body = f"""
                     <p>เรียน คุณชัยกิจ (Sale-CO),</p>
@@ -639,12 +667,11 @@ def render_manager():
                     <hr>
                     <p><b>⚠️ สิ่งที่ต้องทำ:</b></p>
                     <p>รบกวนคุณชัยกิจ <b>โทรแจ้งเซลล์ ({sales_person}) โดยตรง</b> เพื่อแจ้งผลและหาวิธีการขายใหม่ครับ</p>
-                    <p>ขอบคุณครับ<br>TTT Mini ERP System</p>
                     """
                     send_email_notification(receivers, subject, body)
                     st.toast("📧 ส่งเมลแจ้ง Sale-CO ให้โทรหาเซลล์แล้ว")
-                except:
-                    pass
+                except Exception as e:
+                    print(e)
 
                 st.error("Rejected! (บันทึกสถานะเรียบร้อย)")
                 time.sleep(1)
@@ -903,6 +930,7 @@ if check_password():
     elif "6." in selected: render_wh() # ถ้าเป็น Admin จะเข้าอันนี้
     elif "WH Admin" in selected: render_wh() # ถ้าเป็น user WH จะเข้าอันนี้ (ตามเงื่อนไขด้านบน)
     elif "Support" in selected: render_support()
+
 
 
 

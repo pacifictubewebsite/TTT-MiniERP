@@ -905,7 +905,7 @@ def render_catalogue():
         else:
             st.error(f"❌ ไม่พบไฟล์: {img} (กรุณาตรวจสอบชื่อไฟล์ให้ถูกต้อง)")
 
-# 8. EXECUTIVE DASHBOARD (New! หน้าจอผู้บริหาร)
+# 8. EXECUTIVE DASHBOARD (Fix: Auto-detect column names)
 def render_dashboard():
     st.header("📊 Executive Dashboard (ภาพรวมธุรกิจ)")
     
@@ -915,10 +915,26 @@ def render_dashboard():
         st.info("ยังไม่มีข้อมูลการขาย")
         return
 
-    # Clean ข้อมูล & กรองเฉพาะออเดอร์ที่ "ขายได้จริง" (ไม่เอา Cancelled/Rejected)
+    # 🟢 Clean ชื่อคอลัมน์ (ตัดช่องว่างหน้าหลังทิ้งให้หมด)
     df.columns = df.columns.str.strip()
+    
+    # 🟢 Auto-Fix ชื่อคอลัมน์ (ถ้าเจอ total_price ให้เปลี่ยนเป็น total)
+    if 'total_price' in df.columns:
+        df.rename(columns={'total_price': 'total'}, inplace=True)
+    if 'Total' in df.columns:
+        df.rename(columns={'Total': 'total'}, inplace=True)
+    
+    # ถ้ายังไม่มี total อีก (กันเหนียว) ให้สร้างขึ้นมาเป็น 0
+    if 'total' not in df.columns:
+        df['total'] = 0
+
+    # กรองเฉพาะออเดอร์ที่ "ขายได้จริง"
     valid_status = ['Completed', 'Reserved', 'Pending_SaleCO', 'Pending_Manager'] 
-    df_valid = df[df['status'].isin(valid_status)].copy()
+    if 'status' in df.columns:
+        df_valid = df[df['status'].isin(valid_status)].copy()
+    else:
+        st.error("ไม่พบคอลัมน์ 'status' ใน Google Sheet")
+        return
     
     if df_valid.empty:
         st.warning("ไม่มียอดขายที่ active ในขณะนี้")
@@ -928,91 +944,103 @@ def render_dashboard():
     df_valid['total'] = pd.to_numeric(df_valid['total'], errors='coerce').fillna(0)
     df_valid['qty'] = pd.to_numeric(df_valid['qty'], errors='coerce').fillna(0)
     
-    # --- 🟢 KPI CARDS (ตัวเลขสำคัญ) ---
+    # --- KPI CARDS ---
     total_sales = df_valid['total'].sum()
     total_orders = df_valid['id'].nunique()
     total_items = df_valid['qty'].sum()
     
-    # หายอดขายเดือนนี้
     today = datetime.date.today()
-    df_valid['date'] = pd.to_datetime(df_valid['date'], errors='coerce')
-    this_month = df_valid[df_valid['date'].dt.month == today.month]
-    month_sales = this_month['total'].sum()
+    if 'date' in df_valid.columns:
+        df_valid['date'] = pd.to_datetime(df_valid['date'], errors='coerce')
+        this_month = df_valid[df_valid['date'].dt.month == today.month]
+        month_sales = this_month['total'].sum()
+    else:
+        month_sales = 0
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("💰 ยอดขายรวม (Total Sales)", f"{total_sales:,.0f} ฿", help="ยอดขายสะสมทั้งหมด")
+    c1.metric("💰 ยอดขายรวม", f"{total_sales:,.0f} ฿")
     c2.metric("📅 ยอดขายเดือนนี้", f"{month_sales:,.0f} ฿")
-    c3.metric("📃 จำนวนบิล (Orders)", f"{total_orders} ใบ")
-    c4.metric("📦 จำนวนสินค้าที่ออก", f"{total_items:,.0f} ชิ้น")
+    c3.metric("📃 จำนวนบิล", f"{total_orders} ใบ")
+    c4.metric("📦 สินค้าออก (ชิ้น)", f"{total_items:,.0f}")
     
     st.divider()
 
-    # --- 🟢 CHARTS (กราฟสวยงาม) ---
+    # --- CHARTS ---
     col_chart1, col_chart2 = st.columns(2)
     
     with col_chart1:
-        st.subheader("🏆 5 อันดับ สินค้าขายดี (By Qty)")
-        # Map ชื่อสินค้าก่อน (เพื่อให้กราฟโชว์ชื่อ ไม่ใช่ Code)
+        st.subheader("🏆 5 อันดับ สินค้าขายดี")
+        # Map ชื่อสินค้า
         df_inv = get_data("Inventory")
         if not df_inv.empty:
+            df_inv.columns = df_inv.columns.str.strip() # Clean Inventory columns too
             df_inv['code'] = df_inv['code'].astype(str)
-            code_map = dict(zip(df_inv['code'], df_inv['name']))
-            df_valid['product_name'] = df_valid['code'].astype(str).map(code_map).fillna(df_valid['code'])
+            if 'name' in df_inv.columns:
+                code_map = dict(zip(df_inv['code'], df_inv['name']))
+                df_valid['product_name'] = df_valid['code'].astype(str).map(code_map).fillna(df_valid['code'])
+            else:
+                df_valid['product_name'] = df_valid['code']
         else:
             df_valid['product_name'] = df_valid['code']
 
         top_products = df_valid.groupby('product_name')['qty'].sum().sort_values(ascending=False).head(5)
-        st.bar_chart(top_products, color="#FF4B4B") # สีแดง TTT
+        st.bar_chart(top_products, color="#FF4B4B")
 
     with col_chart2:
         st.subheader("👨‍💼 ยอดขายแบ่งตามเซลล์")
         if 'sales_person' in df_valid.columns:
             sales_perf = df_valid.groupby('sales_person')['total'].sum().sort_values(ascending=False)
-            st.bar_chart(sales_perf, color="#29B5E8") # สีฟ้า
+            st.bar_chart(sales_perf, color="#29B5E8")
         else:
-            st.error("ไม่พบคอลัมน์ sales_person")
+            st.info("ไม่พบคอลัมน์ sales_person")
 
-    st.caption(f"อัปเดตข้อมูลล่าสุด: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    st.caption(f"Update: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
 
-# 9. CANCEL ORDER (New! ระบบยกเลิกออเดอร์)
+# 9. CANCEL ORDER (Fix: เลือกโชว์เฉพาะคอลัมน์ที่มีอยู่จริง กัน Error)
 def render_cancel():
     st.header("🚫 Cancel Order (ยกเลิกรายการ)")
-    st.info("ℹ️ การยกเลิกที่นี่ คือการเปลี่ยนสถานะเป็น 'Cancelled' (สต็อกที่จองไว้จะคืนกลับสู่ระบบอัตโนมัติ)")
+    st.info("ℹ️ ยกเลิกสถานะเป็น 'Cancelled' และคืนสต็อกอัตโนมัติ")
     
     df = get_data("Orders")
     if df.empty: st.info("ไม่มีข้อมูล"); return
     
-    # กรองเฉพาะสถานะที่ยังยกเลิกได้ (ยังไม่ Cancel และยังไม่ Reject)
-    active_status = ['Pending_Manager', 'Pending_SaleCO', 'Reserved'] 
-    # หมายเหตุ: ถ้าเป็น Completed (ส่งของแล้ว) ปกติจะไม่ให้ Cancel ง่ายๆ ต้องทำรับคืน (Return)
+    # 🟢 Clean ชื่อคอลัมน์
+    df.columns = df.columns.str.strip()
     
+    # กรองเฉพาะสถานะที่ยังยกเลิกได้
+    active_status = ['Pending_Manager', 'Pending_SaleCO', 'Reserved']
+    if 'status' not in df.columns:
+        st.error("ไม่พบคอลัมน์ 'status' กรุณาตรวจสอบ Google Sheet")
+        return
+
     mask = df['status'].isin(active_status)
     active_orders = df[mask]
     
     if active_orders.empty:
-        st.success("✅ ไม่มีออเดอร์ค้าง (Clean!)")
+        st.success("✅ ไม่มีออเดอร์ค้างให้ยกเลิก")
         return
         
-    # ให้เลือกเลข Order ID
     all_ids = active_orders['id'].unique().tolist()
-    sel_id = st.selectbox("เลือกเลขที่ออเดอร์ที่ต้องการยกเลิก", all_ids)
+    sel_id = st.selectbox("เลือกเลขที่ออเดอร์", all_ids)
     
     if sel_id:
-        # โชว์รายละเอียดออเดอร์นั้น
         items = active_orders[active_orders['id'] == sel_id]
-        st.warning(f"⚠️ กำลังจะยกเลิก Order: {sel_id} | ลูกค้า: {items.iloc[0]['customer_name']} | เซลล์: {items.iloc[0]['sales_person']}")
-        st.dataframe(items[['code', 'qty', 'total', 'status']], use_container_width=True)
         
-        reason = st.text_input("ระบุเหตุผลการยกเลิก (ถ้ามี):")
+        # กันเหนียว: เช็คชื่อคนขายกับลูกค้าก่อนดึง
+        c_name = items.iloc[0]['customer_name'] if 'customer_name' in items.columns else "-"
+        s_name = items.iloc[0]['sales_person'] if 'sales_person' in items.columns else "-"
+        
+        st.warning(f"⚠️ กำลังจะยกเลิก Order: {sel_id} | ลูกค้า: {c_name} | เซลล์: {s_name}")
+        
+        # 🟢 วิธีแก้จุดที่ Error: เลือกโชว์เฉพาะคอลัมน์ที่มีอยู่จริงเท่านั้น
+        target_cols = ['code', 'qty', 'total', 'total_price', 'status'] # ใส่เผื่อไว้ทั้งคู่
+        valid_cols = [c for c in target_cols if c in items.columns]
+        
+        st.dataframe(items[valid_cols], use_container_width=True)
         
         if st.button("🚨 ยืนยันการยกเลิก (Cancel Now)", type="primary"):
-            # เปลี่ยนสถานะเป็น Cancelled
             run_query("update_order_status", oid=sel_id, status="Cancelled")
-            
-            # บันทึกเหตุผลลง Log หรือ Console (ถ้าต้องการ) ในที่นี้เปลี่ยนสถานะก็เพียงพอ
-            # ระบบจอง (Reserved Qty) จะคำนวณใหม่เองอัตโนมัติ ทำให้ Available เพิ่มกลับมาเอง
-            
-            st.success(f"✅ ยกเลิก Order {sel_id} เรียบร้อย! สต็อกคืนกลับระบบแล้ว")
+            st.success(f"✅ ยกเลิก Order {sel_id} เรียบร้อย!")
             time.sleep(2)
             st.rerun()
 
@@ -1080,6 +1108,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

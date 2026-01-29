@@ -905,6 +905,117 @@ def render_catalogue():
         else:
             st.error(f"❌ ไม่พบไฟล์: {img} (กรุณาตรวจสอบชื่อไฟล์ให้ถูกต้อง)")
 
+# 8. EXECUTIVE DASHBOARD (New! หน้าจอผู้บริหาร)
+def render_dashboard():
+    st.header("📊 Executive Dashboard (ภาพรวมธุรกิจ)")
+    
+    # 1. ดึงข้อมูล
+    df = get_data("Orders")
+    if df.empty:
+        st.info("ยังไม่มีข้อมูลการขาย")
+        return
+
+    # Clean ข้อมูล & กรองเฉพาะออเดอร์ที่ "ขายได้จริง" (ไม่เอา Cancelled/Rejected)
+    df.columns = df.columns.str.strip()
+    valid_status = ['Completed', 'Reserved', 'Pending_SaleCO', 'Pending_Manager'] 
+    df_valid = df[df['status'].isin(valid_status)].copy()
+    
+    if df_valid.empty:
+        st.warning("ไม่มียอดขายที่ active ในขณะนี้")
+        return
+
+    # แปลงตัวเลข
+    df_valid['total'] = pd.to_numeric(df_valid['total'], errors='coerce').fillna(0)
+    df_valid['qty'] = pd.to_numeric(df_valid['qty'], errors='coerce').fillna(0)
+    
+    # --- 🟢 KPI CARDS (ตัวเลขสำคัญ) ---
+    total_sales = df_valid['total'].sum()
+    total_orders = df_valid['id'].nunique()
+    total_items = df_valid['qty'].sum()
+    
+    # หายอดขายเดือนนี้
+    today = datetime.date.today()
+    df_valid['date'] = pd.to_datetime(df_valid['date'], errors='coerce')
+    this_month = df_valid[df_valid['date'].dt.month == today.month]
+    month_sales = this_month['total'].sum()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("💰 ยอดขายรวม (Total Sales)", f"{total_sales:,.0f} ฿", help="ยอดขายสะสมทั้งหมด")
+    c2.metric("📅 ยอดขายเดือนนี้", f"{month_sales:,.0f} ฿")
+    c3.metric("📃 จำนวนบิล (Orders)", f"{total_orders} ใบ")
+    c4.metric("📦 จำนวนสินค้าที่ออก", f"{total_items:,.0f} ชิ้น")
+    
+    st.divider()
+
+    # --- 🟢 CHARTS (กราฟสวยงาม) ---
+    col_chart1, col_chart2 = st.columns(2)
+    
+    with col_chart1:
+        st.subheader("🏆 5 อันดับ สินค้าขายดี (By Qty)")
+        # Map ชื่อสินค้าก่อน (เพื่อให้กราฟโชว์ชื่อ ไม่ใช่ Code)
+        df_inv = get_data("Inventory")
+        if not df_inv.empty:
+            df_inv['code'] = df_inv['code'].astype(str)
+            code_map = dict(zip(df_inv['code'], df_inv['name']))
+            df_valid['product_name'] = df_valid['code'].astype(str).map(code_map).fillna(df_valid['code'])
+        else:
+            df_valid['product_name'] = df_valid['code']
+
+        top_products = df_valid.groupby('product_name')['qty'].sum().sort_values(ascending=False).head(5)
+        st.bar_chart(top_products, color="#FF4B4B") # สีแดง TTT
+
+    with col_chart2:
+        st.subheader("👨‍💼 ยอดขายแบ่งตามเซลล์")
+        if 'sales_person' in df_valid.columns:
+            sales_perf = df_valid.groupby('sales_person')['total'].sum().sort_values(ascending=False)
+            st.bar_chart(sales_perf, color="#29B5E8") # สีฟ้า
+        else:
+            st.error("ไม่พบคอลัมน์ sales_person")
+
+    st.caption(f"อัปเดตข้อมูลล่าสุด: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
+
+# 9. CANCEL ORDER (New! ระบบยกเลิกออเดอร์)
+def render_cancel():
+    st.header("🚫 Cancel Order (ยกเลิกรายการ)")
+    st.info("ℹ️ การยกเลิกที่นี่ คือการเปลี่ยนสถานะเป็น 'Cancelled' (สต็อกที่จองไว้จะคืนกลับสู่ระบบอัตโนมัติ)")
+    
+    df = get_data("Orders")
+    if df.empty: st.info("ไม่มีข้อมูล"); return
+    
+    # กรองเฉพาะสถานะที่ยังยกเลิกได้ (ยังไม่ Cancel และยังไม่ Reject)
+    active_status = ['Pending_Manager', 'Pending_SaleCO', 'Reserved'] 
+    # หมายเหตุ: ถ้าเป็น Completed (ส่งของแล้ว) ปกติจะไม่ให้ Cancel ง่ายๆ ต้องทำรับคืน (Return)
+    
+    mask = df['status'].isin(active_status)
+    active_orders = df[mask]
+    
+    if active_orders.empty:
+        st.success("✅ ไม่มีออเดอร์ค้าง (Clean!)")
+        return
+        
+    # ให้เลือกเลข Order ID
+    all_ids = active_orders['id'].unique().tolist()
+    sel_id = st.selectbox("เลือกเลขที่ออเดอร์ที่ต้องการยกเลิก", all_ids)
+    
+    if sel_id:
+        # โชว์รายละเอียดออเดอร์นั้น
+        items = active_orders[active_orders['id'] == sel_id]
+        st.warning(f"⚠️ กำลังจะยกเลิก Order: {sel_id} | ลูกค้า: {items.iloc[0]['customer_name']} | เซลล์: {items.iloc[0]['sales_person']}")
+        st.dataframe(items[['code', 'qty', 'total', 'status']], use_container_width=True)
+        
+        reason = st.text_input("ระบุเหตุผลการยกเลิก (ถ้ามี):")
+        
+        if st.button("🚨 ยืนยันการยกเลิก (Cancel Now)", type="primary"):
+            # เปลี่ยนสถานะเป็น Cancelled
+            run_query("update_order_status", oid=sel_id, status="Cancelled")
+            
+            # บันทึกเหตุผลลง Log หรือ Console (ถ้าต้องการ) ในที่นี้เปลี่ยนสถานะก็เพียงพอ
+            # ระบบจอง (Reserved Qty) จะคำนวณใหม่เองอัตโนมัติ ทำให้ Available เพิ่มกลับมาเอง
+            
+            st.success(f"✅ ยกเลิก Order {sel_id} เรียบร้อย! สต็อกคืนกลับระบบแล้ว")
+            time.sleep(2)
+            st.rerun()
+
 # ==========================================
 # 🚀 MAIN APP LOGIC
 # ==========================================
@@ -913,7 +1024,7 @@ if check_password():
     user = st.session_state['user_name']
     
     with st.sidebar:
-        # (ส่วนโลโก้เดิมของบอส)
+        # (ส่วนโลโก้...คงเดิม)
         if os.path.exists("images.png"):
             st.image("images.png", use_container_width=True)
             
@@ -922,23 +1033,32 @@ if check_password():
         st.divider()
         
         options = []
+        
+        # --- กำหนดสิทธิ์การมองเห็นเมนู ---
         if role == 'WH':
-            options = ["5. WH Admin", "6. Support (ช่วยเหลือ)"]
+            options = ["WH Admin", "Support (ช่วยเหลือ)"]
         else:
-            # เพิ่มเมนูแคตตาล็อกให้ทุกคนเห็น (ยกเว้น WH อาจจะไม่จำเป็น หรือให้เห็นก็ได้แล้วแต่บอส)
+            # เมนูพื้นฐานสำหรับ Sales/Admin/Manager
             if role in ['Admin', 'GM', 'CCO', 'Sale-CO', 'Sale']:
                 options.append("1. Sale Report")
                 options.append("2. Stock & Order")
-                options.append("3. Catalogue (ดูสินค้า)") # 🟢 เพิ่มตรงนี้ครับ
+                options.append("3. Catalogue (ดูสินค้า)")
             
+            # เมนูอนุมัติ (Manager)
             if role in ['Admin', 'GM']:
-                options.append("4. Manager Approve") # เลื่อนเลขเป็น 4
-            if role in ['Admin', 'Sale-CO']:
-                options.append("5. Sale-CO (Confirm Reserve)") # เลื่อนเลขเป็น 5
-            if role == 'Admin':
-                options.append("6. WH Admin") # เลื่อนเลขเป็น 6
+                options.append("4. Manager Approve")
+                options.append("8. Dashboard (ผู้บริหาร)") # 🟢 เพิ่ม Dashboard
             
-            options.append("7. Support (ช่วยเหลือ)") # เลื่อนเลขเป็น 7
+            # เมนู Sale-CO
+            if role in ['Admin', 'Sale-CO']:
+                options.append("5. Sale-CO (Confirm Reserve)")
+                options.append("9. Cancel Order (ยกเลิกบิล)") # 🟢 เพิ่ม Cancel ให้ Admin/Sale-CO
+                
+            # เมนู Admin
+            if role == 'Admin':
+                options.append("6. WH Admin")
+            
+            options.append("7. Support (ช่วยเหลือ)")
 
         if options:
             selected = st.radio("เมนูใช้งาน", options)
@@ -951,12 +1071,16 @@ if check_password():
     # Router (ตัวแยกทางเดิน)
     if "1." in selected: render_sale_report()
     elif "2." in selected: render_stock_order()
-    elif "3." in selected: render_catalogue() # 🟢 เพิ่มทางเดินให้ Catalogue
+    elif "3." in selected: render_catalogue()
     elif "4." in selected: render_manager()
     elif "5." in selected: render_saleco()
-    elif "6." in selected: render_wh() # ถ้าเป็น Admin จะเข้าอันนี้
-    elif "WH Admin" in selected: render_wh() # ถ้าเป็น user WH จะเข้าอันนี้ (ตามเงื่อนไขด้านบน)
+    elif "6." in selected: render_wh()
+    elif "WH Admin" in selected: render_wh()
     elif "Support" in selected: render_support()
+    # 🟢 เพิ่มทางเดินใหม่
+    elif "8." in selected: render_dashboard()
+    elif "9." in selected: render_cancel()
+
 
 
 

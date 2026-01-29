@@ -429,22 +429,20 @@ def render_sale_report():
                             st.session_state['edit_data'] = row.to_dict()
                             st.rerun()
 
-# 2. STOCK & ORDER (Update: เพิ่มปุ่ม Refresh แก้ปัญหาหน้าค้าง)
+# 2. STOCK & ORDER (Update: เพิ่มการแจ้งเตือนเมื่อโดน Reject ในหน้าประวัติ)
 def render_stock_order():
     st.header("🛒 Check Stock & Open Order (ระบบตะกร้า)")
     
     if 'cart' not in st.session_state:
         st.session_state['cart'] = []
     
-    # 🟢 1. ดึง Inventory
+    # 🟢 1. ดึง Inventory (แบบ Retry)
     df = get_data("Inventory")
-    
-    # 🚨 ถ้าดึงไม่เจอ ให้ขึ้นปุ่ม Refresh แทนการโชว์ Error สีเหลืองเฉยๆ
     if df.empty:
         st.warning("⚠️ โหลดข้อมูล Stock ไม่สำเร็จ (ระบบอาจกำลังบันทึกข้อมูล)")
         if st.button("🔄 กดตรงนี้เพื่อโหลดใหม่ (Refresh)", type="primary"):
             st.rerun()
-        return # หยุดการทำงานแค่นี้ รอคนกดปุ่ม
+        return
     
     # 🟢 2. ดึง Orders
     df_ord = get_data("Orders")
@@ -453,6 +451,7 @@ def render_stock_order():
         if 'customer_name' not in df_ord.columns and 'customer' in df_ord.columns:
             df_ord.rename(columns={'customer': 'customer_name'}, inplace=True)
 
+    # ... (ส่วนคำนวณ Reserved เหมือนเดิม) ...
     reserved = pd.DataFrame()
     if not df_ord.empty:
         active_status = ['Pending_Manager', 'Pending_SaleCO', 'Reserved']
@@ -471,7 +470,7 @@ def render_stock_order():
     df['reserved_qty'] = df['reserved_qty'].fillna(0)
     df['available'] = df['real_stock'] - df['reserved_qty']
 
-    # --- ส่วนค้นหาและแสดงผล ---
+    # --- ส่วนค้นหาและแสดงผล (เหมือนเดิม) ---
     search = st.text_input("🔍 ค้นหาสินค้า")
     if search:
         mask = df['name'].astype(str).str.contains(search, case=False) | df['code'].astype(str).str.contains(search, case=False)
@@ -479,12 +478,7 @@ def render_stock_order():
 
     event = st.dataframe(
         df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], 
-        column_config={
-            "real_stock": "Stock", 
-            "reserved_qty": "Jong", 
-            "available": "Ready",
-            "unit": "หน่วยนับ"
-        },
+        column_config={"real_stock": "Stock", "reserved_qty": "Jong", "available": "Ready", "unit": "หน่วยนับ"},
         use_container_width=True, on_select="rerun", selection_mode="single-row"
     )
 
@@ -492,26 +486,16 @@ def render_stock_order():
         item = df.iloc[event.selection.rows[0]]
         st.divider()
         st.subheader(f"➕ เพิ่มลงตะกร้า: {item['name']}")
-        
         c1, c2 = st.columns(2)
         qty = c1.number_input(f"จำนวน ({item['unit']})", min_value=1, value=1)
         ptype = c2.radio("ราคา", ["Normal", "Special"])
-        
         price = 0.0
         if ptype == "Special":
             price = st.number_input("ระบุราคาพิเศษ", min_value=0.0)
             st.warning("⚠️ ราคาพิเศษต้องรออนุมัติ")
 
         if st.button("🛒 ใส่ตะกร้า", type="primary"):
-            cart_item = {
-                "code": item['code'],
-                "name": item['name'],
-                "qty": qty,
-                "unit": item['unit'],
-                "price": price,
-                "type": ptype,
-                "total": qty * price if ptype == "Special" else 0
-            }
+            cart_item = {"code": item['code'], "name": item['name'], "qty": qty, "unit": item['unit'], "price": price, "type": ptype, "total": qty * price if ptype == "Special" else 0}
             st.session_state['cart'].append(cart_item)
             st.success(f"เพิ่ม {item['name']} จำนวน {qty} ลงตะกร้าแล้ว!")
             time.sleep(0.5)
@@ -519,113 +503,150 @@ def render_stock_order():
 
     st.divider()
     st.subheader(f"🛒 ตะกร้าสินค้า ({len(st.session_state['cart'])})")
-    
     if st.session_state['cart']:
         cart_df = pd.DataFrame(st.session_state['cart'])
         st.dataframe(cart_df, use_container_width=True)
-        
         if st.button("❌ ล้างตะกร้า"):
             st.session_state['cart'] = []
             st.rerun()
-
         st.write("---")
         st.write("🚀 **ยืนยันการสั่งซื้อ**")
         c1, c2 = st.columns(2)
         s_name = c1.text_input("ชื่อเซลล์", value=st.session_state['user_name'], disabled=True)
         c_name = c2.text_input("ชื่อลูกค้า (Customer)")
-
         if st.button("✅ ยืนยันออเดอร์ (Confirm Order)", type="primary"):
             if c_name:
                 so_id = generate_so_no()
-                
                 has_special = False
                 items_html_list = ""
-                
-                # 🟡 1. บันทึกข้อมูลลง Google Sheets
                 for item in st.session_state['cart']:
                     status = "Pending_Manager" if item['type'] == "Special" else "Pending_SaleCO"
-                    
                     if item['type'] == "Special": has_special = True
                     price_txt = f"ราคาขออนุมัติ: {item['price']:,} บาท" if item['type'] == "Special" else "ราคา: ปกติ"
                     items_html_list += f"<li><b>สินค้า:</b> {item['name']} (Code: {item['code']}) <br> <b>จำนวน:</b> {item['qty']} {item['unit']} | {price_txt}</li>"
-                    
-                    row = [
-                        so_id, str(datetime.date.today()), s_name, c_name, item['code'], 
-                        item['qty'], item['price'], item['total'], item['type'], status
-                    ]
+                    row = [so_id, str(datetime.date.today()), s_name, c_name, item['code'], item['qty'], item['price'], item['total'], item['type'], status]
                     append_data("Orders", row)
-                
-                # 🟡 2. ส่งอีเมล (ถ้าตั้งค่าไว้)
                 try:
                     if has_special:
                         subject = f"🔥 ขออนุมัติราคาพิเศษ (Special Price Request) - {so_id}"
                         receivers = ["jitpanu@pacifictube.com", "theerapon@hosecenter.co.th"]
-                        body = f"""
-                        <p>เรียน คุณจิตภาณุ (GM) และ คุณธีรพล (CCO),</p>
-                        <p>มีรายการขออนุมัติราคาพิเศษจากฝ่ายขาย โดยมีรายละเอียดดังนี้:</p>
-                        <ul><li><b>เลขที่เอกสาร:</b> {so_id}</li><li><b>ชื่อเซลล์ผู้ขอ:</b> {s_name}</li><li><b>ลูกค้า/ร้านค้า:</b> {c_name}</li></ul>
-                        <p><b>รายการสินค้าที่ขอราคาพิเศษ:</b></p><ul>{items_html_list}</ul>
-                        <hr><p><b>⚠️ การดำเนินการ:</b></p><p>รบกวนท่าน<b>เข้าสู่ระบบ TTT Mini ERP</b> เพื่อตรวจสอบและกดอนุมัติรายการครับ</p>
-                        """
+                        body = f"<p>เรียน GM/CCO,</p><p>มีรายการขอราคาพิเศษ: {so_id} จาก {s_name}</p><ul>{items_html_list}</ul><p>โปรดอนุมัติในระบบ TTT Mini ERP</p>"
                         send_email_notification(receivers, subject, body)
                     else:
-                        subject = f"📦 แจ้งเตือนออเดอร์ใหม่ (New Order) - {so_id}"
+                        subject = f"📦 แจ้งเตือนออเดอร์ใหม่ - {so_id}"
                         receivers = ["Chaiyakit@pacifictube.com"]
-                        body = f"""
-                        <p>เรียน คุณชัยกิจ (Sale-CO),</p>
-                        <p>มีรายการสั่งซื้อสินค้าใหม่เข้ามาในระบบ รายละเอียดดังนี้:</p>
-                        <ul><li><b>เลขที่เอกสาร:</b> {so_id}</li><li><b>ชื่อเซลล์:</b> {s_name}</li><li><b>ลูกค้า:</b> {c_name}</li></ul>
-                        <p><b>รายการสินค้า:</b></p><ul>{items_html_list}</ul>
-                        <hr><p><b>⚠️ การดำเนินการ:</b></p><p>รบกวนท่าน<b>เข้าสู่ระบบ TTT Mini ERP</b> เพื่อตรวจสอบและกดปุ่ม "ยืนยันจองของ (Reserved)" ครับ</p>
-                        """
+                        body = f"<p>เรียน Sale-CO,</p><p>มีออเดอร์ใหม่: {so_id} จาก {s_name}</p><ul>{items_html_list}</ul><p>โปรดตรวจสอบในระบบ</p>"
                         send_email_notification(receivers, subject, body)
-                except:
-                    pass # ถ้าส่งเมลไม่ผ่าน ก็ปล่อยผ่านไปก่อน ไม่ให้ระบบค้าง
-
+                except: pass
                 st.success(f"🎉 เปิดบิลสำเร็จ! เลขที่: {so_id}")
                 st.session_state['cart'] = []
-                
-                # 🛑 ชะลอเวลาสัก 2 วินาที เพื่อให้ Google Sheet บันทึกเสร็จทัน
                 time.sleep(2) 
                 st.rerun()
-            else:
-                st.error("กรุณาระบุชื่อลูกค้า")
-    else:
-        st.info("ตะกร้ายังว่างอยู่ เลือกสินค้าด้านบนได้เลย")
+            else: st.error("กรุณาระบุชื่อลูกค้า")
+    else: st.info("ตะกร้ายังว่างอยู่ เลือกสินค้าด้านบนได้เลย")
 
     st.write("---")
-    with st.expander("📜 ประวัติการเปิดบิลของฉัน (My Sale History)"):
-        if not df_ord.empty:
-            if 'sales_person' in df_ord.columns:
-                my_history = df_ord[df_ord['sales_person'] == st.session_state['user_name']]
-                if not my_history.empty:
-                    my_history = my_history.iloc[::-1]
-                    cols_to_show = ['id', 'date', 'customer_name', 'code', 'qty', 'status']
-                    valid_cols = [c for c in cols_to_show if c in my_history.columns]
-                    st.dataframe(my_history[valid_cols], use_container_width=True)
-                else:
-                    st.caption("ยังไม่มีประวัติการขาย")
+    
+    # 🟢🟢🟢 ส่วนที่เพิ่ม: แจ้งเตือนสถานะ Rejected 🟢🟢🟢
+    if not df_ord.empty and 'sales_person' in df_ord.columns:
+        my_history = df_ord[df_ord['sales_person'] == st.session_state['user_name']]
+        
+        # เช็คว่ามีรายการที่โดนปฏิเสธล่าสุดไหม
+        if 'status' in my_history.columns:
+            rejected_items = my_history[my_history['status'] == 'Rejected']
+            if not rejected_items.empty:
+                st.error(f"❌ คุณมี {len(rejected_items)} รายการที่ 'ไม่อนุมัติ' (Rejected) กรุณาตรวจสอบและติดต่อ Sale-CO")
 
-# 3. MANAGER APPROVE (เหมือนเดิม)
+        with st.expander("📜 ประวัติการเปิดบิลของฉัน (My Sale History)"):
+            if not my_history.empty:
+                my_history = my_history.iloc[::-1]
+                cols_to_show = ['id', 'date', 'customer_name', 'code', 'qty', 'status']
+                valid_cols = [c for c in cols_to_show if c in my_history.columns]
+                
+                # แสดงผลแบบ Highlight สีสถานะ
+                def highlight_status(val):
+                    color = 'black'
+                    if val == 'Rejected': color = 'red'
+                    elif val == 'Completed': color = 'green'
+                    elif val == 'Reserved': color = 'blue'
+                    elif val == 'Pending_Manager': color = 'orange'
+                    return f'color: {color}'
+
+                try:
+                    st.dataframe(my_history[valid_cols].style.applymap(highlight_status, subset=['status']), use_container_width=True)
+                except:
+                    st.dataframe(my_history[valid_cols], use_container_width=True)
+            else:
+                st.caption("ยังไม่มีประวัติการขาย")
+
+# 3. MANAGER APPROVE (Update: Reject -> Email Sale-CO)
 def render_manager():
     st.header("👔 Approval Dashboard")
     df = get_data("Orders")
     if df.empty: st.info("ไม่มีข้อมูล"); return
+    
+    # กรองเฉพาะรายการที่รอ Manager อนุมัติ
     pending = df[df['status'] == 'Pending_Manager']
-    if pending.empty: st.success("✅ ไม่มีรายการค้างอนุมัติ"); return
+    
+    if pending.empty:
+        st.success("✅ ไม่มีรายการค้างอนุมัติ")
+        return
+    
+    # Group by Order ID
     order_groups = pending.groupby('id')
+    
     for oid, items in order_groups:
-        with st.expander(f"Order: {oid} | เซลล์: {items.iloc[0]['sales_person']} | ลูกค้า: {items.iloc[0]['customer_name']}"):
-            st.dataframe(items[['code', 'qty', 'unit_price', 'total_price']])
+        sales_person = items.iloc[0]['sales_person']
+        customer = items.iloc[0]['customer_name']
+        
+        with st.expander(f"Order: {oid} | เซลล์: {sales_person} | ลูกค้า: {customer}"):
+            st.dataframe(items[['code', 'name', 'qty', 'unit_price', 'total_price']])
+            
             c1, c2 = st.columns(2)
+            
+            # ✅ ปุ่มอนุมัติ (เหมือนเดิม)
             if c1.button("อนุมัติทั้งบิล", key=f"app_{oid}"):
                 run_query("update_order_status", oid=oid, status="Pending_SaleCO")
-                st.success("Approved!")
+                st.success("Approved! (ส่งต่อให้ Sale-CO)")
                 time.sleep(1)
                 st.rerun()
-            if c2.button("ไม่อนุมัติ", key=f"rej_{oid}"):
-                run_query("update_order_status", oid=oid, status="Cancelled")
-                st.error("Rejected!")
+            
+            # ❌ ปุ่มไม่อนุมัติ (เพิ่มส่งเมลหา Sale-CO)
+            if c2.button("ไม่อนุมัติ (Reject)", key=f"rej_{oid}"):
+                # 1. อัปเดตสถานะเป็น Rejected
+                run_query("update_order_status", oid=oid, status="Rejected")
+                
+                # 2. ส่งเมลหา Sale-CO ให้โทรแจ้งเซลล์
+                try:
+                    subject = f"❌ แจ้งผล: ไม่อนุมัติราคาพิเศษ (Rejected) - {oid}"
+                    receivers = ["Chaiyakit@pacifictube.com"]
+                    
+                    # รายการสินค้า
+                    items_html = ""
+                    for _, row in items.iterrows():
+                        items_html += f"<li>{row['name']} (จำนวน: {row['qty']}) - ราคาขอ: {row['unit_price']:,}</li>"
+
+                    body = f"""
+                    <p>เรียน คุณชัยกิจ (Sale-CO),</p>
+                    <p>ผู้บริหารได้ทำการ <b>"ไม่อนุมัติ" (Reject)</b> รายการขอราคาพิเศษ ดังนี้:</p>
+                    <ul>
+                        <li><b>เลขที่เอกสาร:</b> {oid}</li>
+                        <li><b>ชื่อเซลล์:</b> {sales_person}</li>
+                        <li><b>ลูกค้า:</b> {customer}</li>
+                    </ul>
+                    <p><b>รายการที่ไม่ผ่าน:</b></p>
+                    <ul>{items_html}</ul>
+                    <hr>
+                    <p><b>⚠️ สิ่งที่ต้องทำ:</b></p>
+                    <p>รบกวนคุณชัยกิจ <b>โทรแจ้งเซลล์ ({sales_person}) โดยตรง</b> เพื่อแจ้งผลและหาวิธีการขายใหม่ครับ</p>
+                    <p>ขอบคุณครับ<br>TTT Mini ERP System</p>
+                    """
+                    send_email_notification(receivers, subject, body)
+                    st.toast("📧 ส่งเมลแจ้ง Sale-CO ให้โทรหาเซลล์แล้ว")
+                except:
+                    pass
+
+                st.error("Rejected! (บันทึกสถานะเรียบร้อย)")
                 time.sleep(1)
                 st.rerun()
 
@@ -882,6 +903,7 @@ if check_password():
     elif "6." in selected: render_wh() # ถ้าเป็น Admin จะเข้าอันนี้
     elif "WH Admin" in selected: render_wh() # ถ้าเป็น user WH จะเข้าอันนี้ (ตามเงื่อนไขด้านบน)
     elif "Support" in selected: render_support()
+
 
 
 

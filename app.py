@@ -89,7 +89,12 @@ def run_query(query_type, **kwargs):
     if query_type == "update_stock":
         wks = sh.worksheet("Inventory")
         cell = wks.find(kwargs['code'])
-        wks.update_cell(cell.row, 4, kwargs['new_stock'])
+        
+        # 🟢 แยกการทำงาน: ถ้าส่ง Stock มาค่อยแก้ Stock
+        if 'new_stock' in kwargs:
+            wks.update_cell(cell.row, 4, kwargs['new_stock'])
+
+        # 🟢 แยกการทำงาน: ถ้าส่ง Remark มาค่อยแก้ Remark
         if 'remark' in kwargs:
             wks.update_cell(cell.row, 6, kwargs['remark'])
 
@@ -513,36 +518,49 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (เหมือนเดิม)
+# 5. WH ADMIN (Update: แยกปุ่มหมายเหตุ ออกจากปุ่มสต็อก)
 def render_wh():
     st.header("🏭 Warehouse Management")
+    
     tab1, tab2, tab3, tab4 = st.tabs(["📦 Ship Orders (ตัดสต็อก)", "✏️ Adjust Stock", "📂 Upload Excel", "📜 History"])
+    
+    # --- TAB 1: Ship Orders (เหมือนเดิม) ---
     with tab1:
         st.subheader("🚚 รายการรอส่งของ (Reserved -> Ship)")
         st.info("ℹ️ รายการเหล่านี้ Sale-CO จองไว้แล้ว กดตัดสต็อกได้เลย")
+        
         df_ord = get_data("Orders")
         if df_ord.empty: st.write("ไม่มีข้อมูล"); return
+        
         reserved_orders = df_ord[df_ord['status'] == 'Reserved']
-        if reserved_orders.empty: st.success("✅ ไม่มีรายการรอส่งของ")
+        
+        if reserved_orders.empty:
+            st.success("✅ ไม่มีรายการรอส่งของ")
         else:
             order_groups = reserved_orders.groupby('id')
             for oid, items in order_groups:
                 with st.expander(f"📦 Order: {oid} | ลูกค้า: {items.iloc[0]['customer_name']}"):
                     st.dataframe(items[['code', 'qty', 'status']])
+                    
                     if st.button("🚚 ตัดสต็อก & ส่งของ (Ship)", key=f"ship_{oid}"):
                         inv = get_data("Inventory")
                         for _, item in items.iterrows():
                             curr_stock = inv.loc[inv['code'].astype(str) == str(item['code']), 'real_stock'].values[0]
                             new_stock = int(curr_stock) - int(item['qty'])
-                            run_query("update_stock", code=str(item['code']), new_stock=new_stock, remark=f"Ship Order {oid}")
+                            # ตัดสต็อกอย่างเดียว ไม่ยุ่งกับ remark ใน Inventory
+                            run_query("update_stock", code=str(item['code']), new_stock=new_stock)
+                            
                             ts = str(datetime.datetime.now())
                             today = str(datetime.date.today())
                             log_row = [ts, today, "Ship Order", str(item['code']), "", item['qty'], "", st.session_state['user_name']]
                             append_data("WH_Logs", log_row)
+                        
                         run_query("update_order_status", oid=oid, status="Completed")
                         st.success(f"✅ ตัดสต็อก Order {oid} เรียบร้อย!")
                         time.sleep(1)
                         st.rerun()
+
+    # --- TAB 2: Adjust Stock (แก้ใหม่ แยก 3 ปุ่ม) ---
     with tab2:
         df = get_data("Inventory")
         if not df.empty:
@@ -550,39 +568,72 @@ def render_wh():
             if search: 
                 mask = df['code'].astype(str).str.contains(search, case=False) | df['name'].astype(str).str.contains(search, case=False)
                 df = df[mask]
+            
             if 'remark' not in df.columns: df['remark'] = ""
-            event = st.dataframe(df[['code','name','real_stock','unit', 'remark']], column_config={"unit": "หน่วยนับ", "remark": "หมายเหตุล่าสุด"}, on_select="rerun", selection_mode="single-row", use_container_width=True)
+            
+            event = st.dataframe(
+                df[['code','name','real_stock','unit', 'remark']], 
+                column_config={"unit": "หน่วยนับ", "remark": "หมายเหตุล่าสุด"}, 
+                on_select="rerun", selection_mode="single-row", use_container_width=True
+            )
+            
             if event.selection.rows:
                 item = df.iloc[event.selection.rows[0]]
+                st.write("---")
                 st.info(f"สินค้า: {item['name']} | 📦 ของเดิม: {item['real_stock']} {item['unit']}")
-                remark_val = st.text_input("📝 หมายเหตุ (ระบุสาเหตุการปรับ)", value=str(item['remark']))
+                
+                # 🟡 โซนที่ 1: จัดการหมายเหตุ (แยกออกมาต่างหาก)
+                c_rem1, c_rem2 = st.columns([3, 1])
+                remark_val = c_rem1.text_input("📝 แก้ไขหมายเหตุ (Internal Note)", value=str(item['remark']))
+                
+                if c_rem2.button("💾 บันทึกหมายเหตุ", use_container_width=True):
+                    # ส่งไปแค่ remark (Stock ไม่เปลี่ยน)
+                    run_query("update_stock", code=str(item['code']), remark=remark_val)
+                    st.success("✅ อัปเดตหมายเหตุเรียบร้อย!")
+                    time.sleep(1)
+                    st.rerun()
+                
+                st.write("---")
+                
+                # 🟢 โซนที่ 2: จัดการสต็อก (แยกออกมาต่างหาก)
                 adjust_label = f"ระบุจำนวนสินค้า ({item['unit']})"
                 adjust_qty = st.number_input(adjust_label, min_value=0, step=1, value=0)
+                
                 c1, c2 = st.columns(2)
+                
+                # ปุ่มเพิ่ม (ส่งแค่ new_stock ไม่ส่ง remark)
                 if c1.button("➕ เพิ่ม Stock (รับเข้า)", use_container_width=True, type="primary"):
                     if adjust_qty > 0:
                         new_val = int(item['real_stock']) + adjust_qty
-                        run_query("update_stock", code=str(item['code']), new_stock=new_val, remark=remark_val)
+                        run_query("update_stock", code=str(item['code']), new_stock=new_val)
+                        
                         ts = str(datetime.datetime.now())
                         today = str(datetime.date.today())
                         log_row = [ts, today, "Stock In", str(item['code']), item['name'], adjust_qty, item['unit'], st.session_state['user_name']]
                         append_data("WH_Logs", log_row)
+                        
                         st.success(f"✅ รับเข้า {adjust_qty} เรียบร้อย! (ยอดใหม่: {new_val})")
                         time.sleep(1)
                         st.rerun()
                     else: st.warning("ระบุจำนวน > 0")
+
+                # ปุ่มลด (ส่งแค่ new_stock ไม่ส่ง remark)
                 if c2.button("➖ ตัด Stock (จ่ายออก)", use_container_width=True):
                     if adjust_qty > 0:
                         new_val = int(item['real_stock']) - adjust_qty
-                        run_query("update_stock", code=str(item['code']), new_stock=new_val, remark=remark_val)
+                        run_query("update_stock", code=str(item['code']), new_stock=new_val)
+                        
                         ts = str(datetime.datetime.now())
                         today = str(datetime.date.today())
                         log_row = [ts, today, "Stock Out", str(item['code']), item['name'], adjust_qty, item['unit'], st.session_state['user_name']]
                         append_data("WH_Logs", log_row)
+                        
                         st.warning(f"🔻 จ่ายออก {adjust_qty} เรียบร้อย! (ยอดใหม่: {new_val})")
                         time.sleep(1)
                         st.rerun()
                     else: st.warning("ระบุจำนวน > 0")
+
+    # --- TAB 3: Upload Excel (เหมือนเดิม) ---
     with tab3:
         st.warning("⚠️ การ Upload Excel จะลบข้อมูลเดิมทั้งหมด")
         up = st.file_uploader("เลือกไฟล์ Excel Stock (.xlsx)", type=['xlsx'])
@@ -604,7 +655,10 @@ def render_wh():
                 st.success(f"✅ อัปโหลดสำเร็จ {len(upload_data)} รายการ!")
                 time.sleep(2)
                 st.rerun()
-            except Exception as e: st.error(f"เกิดข้อผิดพลาด: {e}")
+            except Exception as e:
+                st.error(f"เกิดข้อผิดพลาด: {e}")
+
+    # --- TAB 4: History (เหมือนเดิม) ---
     with tab4:
         st.subheader("📜 ประวัติการ รับเข้า/จ่ายออก")
         sel_date = st.date_input("เลือกวันที่ดูประวัติ", datetime.date.today())
@@ -616,9 +670,11 @@ def render_wh():
                 daily_log = daily_log.sort_values(by='Timestamp', ascending=False)
                 st.info(f"📅 รายการประจำวันที่: {sel_date}")
                 st.dataframe(daily_log[['Timestamp', 'Action', 'Name', 'Qty', 'Unit', 'User']], hide_index=True, use_container_width=True)
-            else: st.warning(f"🚫 ไม่พบรายการเคลื่อนไหวในวันที่ {sel_date}")
-        else: st.warning("ยังไม่มีประวัติการใช้งาน")
-
+            else:
+                st.warning(f"🚫 ไม่พบรายการเคลื่อนไหวในวันที่ {sel_date}")
+        else:
+            st.warning("ยังไม่มีประวัติการใช้งาน")
+            
 # 6. SUPPORT (เหมือนเดิม)
 def render_support():
     st.header("🆘 Support & Nearby Services")
@@ -674,4 +730,5 @@ if check_password():
     elif "4." in selected: render_saleco()
     elif "5." in selected: render_wh()
     elif "6." in selected: render_support()
+
 

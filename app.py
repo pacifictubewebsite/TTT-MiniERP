@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import time
+from datetime import timedelta
 import os
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -116,6 +117,9 @@ USERS = {
 # ☁️ GOOGLE SHEETS CONNECTION
 # ==========================================
 @st.cache_resource
+def get_thai_now():
+    """ฟังก์ชันดึงเวลาปัจจุบันแบบไทย (UTC+7)"""
+    return datetime.datetime.now() + timedelta(hours=7)
 def get_gsheet_client():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     try:
@@ -1279,6 +1283,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

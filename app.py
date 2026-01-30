@@ -44,6 +44,50 @@ def send_email_notification(to_emails, subject, body_html):
         print(f"Email Error: {e}") # ดู Log ใน Terminal ถ้าส่งไม่ได้
         return False
 
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+from oauth2client.service_account import ServiceAccountCredentials
+
+# 🆔 ID ของโฟลเดอร์บอส (ใส่ให้แล้วครับ)
+DRIVE_FOLDER_ID = "1SzlXZqRZFGPkn_vKrx6dLJVMVrkx7lFL"
+
+def upload_image_to_drive(image_file, file_name):
+    """ฟังก์ชันอัปโหลดรูปเข้า Google Drive แล้วส่งลิงก์กลับมา"""
+    try:
+        # ใช้ Credential เดียวกับ Google Sheet
+        scope = ['https://www.googleapis.com/auth/drive']
+        
+        # โหลด Key (รองรับทั้งแบบ Secrets และไฟล์ json)
+        if "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        else:
+            creds = ServiceAccountCredentials.from_json_keyfile_name("key.json", scope)
+        
+        # สร้าง Service
+        service = build('drive', 'v3', credentials=creds)
+        
+        file_metadata = {
+            'name': file_name,
+            'parents': [DRIVE_FOLDER_ID] # อัปเข้าโฟลเดอร์นี้
+        }
+        
+        media = MediaIoBaseUpload(image_file, mimetype='image/jpeg')
+        
+        # สั่งอัปโหลด
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, webViewLink'
+        ).execute()
+        
+        # ส่งลิงก์ดูรูปกลับไป
+        return file.get('webViewLink')
+        
+    except Exception as e:
+        st.error(f"Upload Error: {e}")
+        return None
+
 # ==========================================
 # ⚙️ CONFIG & SECURITY
 # ==========================================
@@ -377,22 +421,37 @@ def render_sale_report():
                             append_data("Competitor_Data", [final_brand, final_prod])
 
                     final_obj = ", ".join(selected_objs)
-                    saved_path = ""
+                    saved_link = "" # 1. ตั้งค่าเริ่มต้นเป็นว่างไว้ก่อน
+
                     if img_file:
                         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
                         fname = f"IMG_{ts}.jpg"
-                        saved_path = os.path.join(UPLOAD_FOLDER, fname)
-                        with open(saved_path, "wb") as f: f.write(img_file.getbuffer())
-
+                        
+                        # 👇 เรียกฟังก์ชันอัปโหลด (ถูกต้องแล้วครับ)
+                        with st.spinner("กำลังอัปโหลดรูป..."):
+                            saved_link = upload_image_to_drive(img_file, fname)
+                    
                     # 🟢 บันทึก GPS ลง Database (Lat, Lon)
                     row = [
-                        default_doc, str(date_visit), sales_name, cust_name, final_obj, 
-                        problem, remark, saved_path, 0, str(datetime.datetime.now()),
+                        default_doc, 
+                        str(date_visit), 
+                        sales_name, 
+                        cust_name, 
+                        final_obj, 
+                        problem, 
+                        remark, 
+                        saved_link, # 👈 แก้ตรงนี้ครับ! (จาก saved_path เป็น saved_link)
+                        0, 
+                        str(datetime.datetime.now()),
                         time_in.strftime("%H:%M"), 
                         time_out.strftime("%H:%M"), 
-                        final_brand, final_prod, comp_price,
-                        str(gps_lat), str(gps_lon) # เพิ่ม 2 ช่องนี้
+                        final_brand, 
+                        final_prod, 
+                        comp_price,
+                        str(gps_lat), 
+                        str(gps_lon)
                     ]
+                    
                     append_data("Sale_Reports", row)
                     
                     st.success(f"✅ บันทึกสำเร็จ: {default_doc}")
@@ -1195,6 +1254,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

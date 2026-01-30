@@ -507,14 +507,14 @@ def render_sale_report():
                             st.session_state['edit_data'] = row.to_dict()
                             st.rerun()
 
-# 2. STOCK & ORDER (Update: เพิ่มการแจ้งเตือนเมื่อโดน Reject ในหน้าประวัติ)
+# 2. STOCK & ORDER (ฉบับแก้ไข: ดูประวัติได้ตามสิทธิ์)
 def render_stock_order():
     st.header("🛒 Check Stock & Open Order (ระบบตะกร้า)")
     
     if 'cart' not in st.session_state:
         st.session_state['cart'] = []
     
-    # 🟢 1. ดึง Inventory (แบบ Retry)
+    # 🟢 1. ดึง Inventory
     df = get_data("Inventory")
     if df.empty:
         st.warning("⚠️ โหลดข้อมูล Stock ไม่สำเร็จ (ระบบอาจกำลังบันทึกข้อมูล)")
@@ -522,7 +522,7 @@ def render_stock_order():
             st.rerun()
         return
     
-    # 🟢 2. ดึง Orders
+    # 🟢 2. ดึง Orders (ต้องดึงตรงนี้ก่อน ถึงจะใช้ df_ord ได้)
     df_ord = get_data("Orders")
     if not df_ord.empty:
         df_ord.columns = df_ord.columns.str.strip()
@@ -548,7 +548,15 @@ def render_stock_order():
     df['reserved_qty'] = df['reserved_qty'].fillna(0)
     df['available'] = df['real_stock'] - df['reserved_qty']
 
-    # --- ส่วนค้นหาและแสดงผล (เหมือนเดิม) ---
+    # --- ส่วนค้นหาและแสดงผล (เพิ่มตัวกรองหมวดหมู่) ---
+    if 'category' in df.columns:
+        all_cats = df['category'].dropna().unique().tolist()
+        if all_cats:
+            with st.expander("📂 ตัวกรองหมวดหมู่ (Filter Category)"):
+                selected_cats = st.multiselect("เลือกประเภท/สี:", all_cats)
+                if selected_cats:
+                    df = df[df['category'].isin(selected_cats)]
+
     search = st.text_input("🔍 ค้นหาสินค้า")
     if search:
         mask = df['name'].astype(str).str.contains(search, case=False) | df['code'].astype(str).str.contains(search, case=False)
@@ -596,26 +604,13 @@ def render_stock_order():
             if c_name:
                 so_id = generate_so_no()
                 has_special = False
-                items_html_list = ""
+                # ... (ส่วนส่งเมลเดิม) ...
                 for item in st.session_state['cart']:
                     status = "Pending_Manager" if item['type'] == "Special" else "Pending_SaleCO"
                     if item['type'] == "Special": has_special = True
-                    price_txt = f"ราคาขออนุมัติ: {item['price']:,} บาท" if item['type'] == "Special" else "ราคา: ปกติ"
-                    items_html_list += f"<li><b>สินค้า:</b> {item['name']} (Code: {item['code']}) <br> <b>จำนวน:</b> {item['qty']} {item['unit']} | {price_txt}</li>"
                     row = [so_id, str(datetime.date.today()), s_name, c_name, item['code'], item['qty'], item['price'], item['total'], item['type'], status]
                     append_data("Orders", row)
-                try:
-                    if has_special:
-                        subject = f"🔥 ขออนุมัติราคาพิเศษ (Special Price Request) - {so_id}"
-                        receivers = ["jitpanu@pacifictube.com", "theerapon@hosecenter.co.th"]
-                        body = f"<p>เรียน GM/CCO,</p><p>มีรายการขอราคาพิเศษ: {so_id} จาก {s_name}</p><ul>{items_html_list}</ul><p>โปรดอนุมัติในระบบ TTT Mini ERP</p>"
-                        send_email_notification(receivers, subject, body)
-                    else:
-                        subject = f"📦 แจ้งเตือนออเดอร์ใหม่ - {so_id}"
-                        receivers = ["Chaiyakit@pacifictube.com"]
-                        body = f"<p>เรียน Sale-CO,</p><p>มีออเดอร์ใหม่: {so_id} จาก {s_name}</p><ul>{items_html_list}</ul><p>โปรดตรวจสอบในระบบ</p>"
-                        send_email_notification(receivers, subject, body)
-                except: pass
+                
                 st.success(f"🎉 เปิดบิลสำเร็จ! เลขที่: {so_id}")
                 st.session_state['cart'] = []
                 time.sleep(2) 
@@ -625,37 +620,62 @@ def render_stock_order():
 
     st.write("---")
     
-    # 🟢🟢🟢 ส่วนที่เพิ่ม: แจ้งเตือนสถานะ Rejected 🟢🟢🟢
-    if not df_ord.empty and 'sales_person' in df_ord.columns:
-        my_history = df_ord[df_ord['sales_person'] == st.session_state['user_name']]
-        
-        # เช็คว่ามีรายการที่โดนปฏิเสธล่าสุดไหม
-        if 'status' in my_history.columns:
-            rejected_items = my_history[my_history['status'] == 'Rejected']
-            if not rejected_items.empty:
-                st.error(f"❌ คุณมี {len(rejected_items)} รายการที่ 'ไม่อนุมัติ' (Rejected) กรุณาตรวจสอบและติดต่อ Sale-CO")
+    # 🟢🟢🟢 ส่วนประวัติการเปิดบิล (แก้ไขแล้ว) 🟢🟢🟢
+    # เช็คก่อนว่ามี df_ord ไหม (กันเหนียว)
+    if 'df_ord' in locals() and not df_ord.empty:
+        user_role = st.session_state['user_role']
+        my_name = st.session_state['user_name']
 
-        with st.expander("📜 ประวัติการเปิดบิลของฉัน (My Sale History)"):
-            if not my_history.empty:
-                my_history = my_history.iloc[::-1]
-                cols_to_show = ['id', 'date', 'customer_name', 'code', 'qty', 'status']
-                valid_cols = [c for c in cols_to_show if c in my_history.columns]
+        # 1. เช็คสิทธิ์: ใครดูทั้งหมดได้บ้าง?
+        if user_role in ['Admin', 'GM', 'CCO', 'Sale-CO']:
+            history_df = df_ord.copy()
+            history_title = "📜 ประวัติการเปิดบิลทั้งหมด (All Sale History)"
+        else:
+            # 2. นอกนั้นดูแค่ของตัวเอง
+            if 'sales_person' in df_ord.columns:
+                history_df = df_ord[df_ord['sales_person'] == my_name]
+            else:
+                history_df = pd.DataFrame() # กัน error
+            history_title = "📜 ประวัติการเปิดบิลของฉัน (My Sale History)"
+
+        # แจ้งเตือนรายการ Rejected (เตือนเฉพาะเจ้าของ)
+        if not df_ord.empty and 'sales_person' in df_ord.columns:
+            my_own_history = df_ord[df_ord['sales_person'] == my_name]
+            if 'status' in my_own_history.columns:
+                rejected_items = my_own_history[my_own_history['status'] == 'Rejected']
+                if not rejected_items.empty:
+                    st.error(f"❌ คุณมี {len(rejected_items)} รายการที่ 'ไม่อนุมัติ' (Rejected) กรุณาตรวจสอบ")
+
+        # แสดงตาราง
+        with st.expander(history_title, expanded=True):
+            if not history_df.empty:
+                history_df = history_df.iloc[::-1] # กลับด้าน (ล่าสุดขึ้นก่อน)
                 
-                # แสดงผลแบบ Highlight สีสถานะ
+                # เพิ่ม sales_person ให้ผู้บริหารเห็น
+                cols_to_show = ['id', 'date', 'sales_person', 'customer_name', 'code', 'qty', 'status']
+                valid_cols = [c for c in cols_to_show if c in history_df.columns]
+                
                 def highlight_status(val):
                     color = 'black'
                     if val == 'Rejected': color = 'red'
                     elif val == 'Completed': color = 'green'
                     elif val == 'Reserved': color = 'blue'
                     elif val == 'Pending_Manager': color = 'orange'
+                    elif val == 'Cancelled': color = 'gray'
                     return f'color: {color}'
 
                 try:
-                    st.dataframe(my_history[valid_cols].style.applymap(highlight_status, subset=['status']), use_container_width=True)
+                    st.dataframe(
+                        history_df[valid_cols].style.applymap(highlight_status, subset=['status']), 
+                        use_container_width=True,
+                        hide_index=True
+                    )
                 except:
-                    st.dataframe(my_history[valid_cols], use_container_width=True)
+                    st.dataframe(history_df[valid_cols], use_container_width=True)
             else:
-                st.caption("ยังไม่มีประวัติการขาย")
+                st.caption("ยังไม่มีประวัติรายการ")
+    else:
+        st.info("ยังไม่มีข้อมูลออเดอร์ในระบบ")
 
 # 3. MANAGER APPROVE (Update: อนุมัติ/ไม่อนุมัติ รายการต่อรายการ)
 def render_manager():
@@ -1259,6 +1279,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

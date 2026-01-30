@@ -99,14 +99,14 @@ if not os.path.exists(UPLOAD_FOLDER):
 # 🔐 ข้อมูลผู้ใช้งาน
 USERS = {
     "kitibodee": {"pass": "Qaqcpti67", "role": "Admin", "name": "Kitibodee"},
-    "jitpanu": {"pass": "Jitpanu2026", "role": "GM", "name": "Jitpanu"},
-    "theeraphol": {"pass": "Theeraphol2026", "role": "CCO", "name": "Theeraphol"},
+    "Jitpanu": {"pass": "Jitpanu@TTT_2026", "role": "GM", "name": "Jitpanu"},
+    "Theerapon": {"pass": "Theer@pon_01", "role": "CCO", "name": "Theeraphol"},
     "chaiyakit": {"pass": "Chaiyakit2026", "role": "Sale-CO", "name": "Chaiyakit"},
     "nattapong": {"pass": "Nattapong2026", "role": "Sale", "name": "Nattapong"},
     "samanan": {"pass": "Samanan2026", "role": "Sale", "name": "Samanan"},
     "suksun": {"pass": "Suksun2026", "role": "Sale", "name": "Suksun"},
     "wutthipong": {"pass": "Wutthipong2026", "role": "Sale", "name": "Wutthipong"},
-    "pojana": {"pass": "Pojana2026", "role": "Sale", "name": "Pojana"},
+    "Podjana": {"pass": "Podjana@sale002", "role": "Sale", "name": "Pojana"},
     "siva": {"pass": "Siva2026", "role": "Sale", "name": "Siva"},
     "sale04": {"pass": "S@le04", "role": "Sale", "name": "Sale04"},
     "vichai": {"pass": "Vichai2026", "role": "WH", "name": "Vichai"}
@@ -1259,6 +1259,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

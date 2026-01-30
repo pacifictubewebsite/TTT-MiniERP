@@ -279,12 +279,11 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (Version Final Stable: แก้ GPS Loop + จำค่าแม่นยำ)
+# 1. SALE REPORT (Version: เวลาละเอียด 1 นาที + GPS นิ่ง + ข้อมูลไม่หาย)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     
     # --- 🟢 ส่วนจัดการ State (ความจำ) ---
-    # เราต้องประกาศตัวแปรใน session_state ไว้ก่อน กันค่าหาย
     if 'edit_mode' not in st.session_state: st.session_state['edit_mode'] = False
     if 'edit_data' not in st.session_state: st.session_state['edit_data'] = {}
     
@@ -364,7 +363,7 @@ def render_sale_report():
                 old_cust = st.session_state['edit_data'].get('customer_name', "")
                 if old_cust in customers: idx_cust = customers.index(old_cust)
             
-            # 🔴 จุดสำคัญ: ใส่ key เพื่อให้มันจำค่าได้
+            # ใส่ key เพื่อให้มันจำค่าได้
             sel_customer = col_select.selectbox("3. ชื่อลูกค้า", customers, index=idx_cust, key="select_cust_final")
             cust_name = sel_customer
             
@@ -377,19 +376,18 @@ def render_sale_report():
             cust_name = st.text_input("ชื่อลูกค้า", key="manual_cust_input")
 
         # =========================================================
-        # 🟢 2. GPS (แก้บั๊ก Loop นรก)
+        # 🟢 2. GPS (Fix Loop)
         # =========================================================
         st.write("---")
         col_gps1, col_gps2 = st.columns([1,3])
         with col_gps1: st.write("📍 **Location**")
         
-        # 🔥 HERO FIX: ถ้ามีค่าแล้ว ไม่ต้องเรียก get_geolocation ซ้ำ!
         if st.session_state['gps_lat'] is None:
             loc = get_geolocation(component_key='gps_fix')
             if loc and 'coords' in loc:
                 st.session_state['gps_lat'] = loc['coords']['latitude']
                 st.session_state['gps_lon'] = loc['coords']['longitude']
-                st.rerun() # รีโหลด 1 ทีเพื่อโชว์ค่า แล้วจบเลย
+                st.rerun() 
         
         with col_gps2:
             if st.session_state['gps_lat']:
@@ -398,7 +396,7 @@ def render_sale_report():
                 st.warning("กำลังจับสัญญาณ... (ถ้าไม่ขึ้นให้กด Refresh 1 ที)")
 
         # =========================================================
-        # 🟢 3. ข้อมูลคู่แข่ง (ต้องใส่ Key ให้จำค่า)
+        # 🟢 3. ข้อมูลคู่แข่ง (อยู่นอก Form เพื่อให้ Dropdown ทำงาน)
         # =========================================================
         st.write("---")
         st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด**")
@@ -437,16 +435,18 @@ def render_sale_report():
             # ย้ายราคามาในนี้
             price = st.number_input("ราคาคู่แข่ง (บาท)", min_value=0.0, step=1.0)
             
-            # เวลา
+            # 🕒 แก้ไขตรงนี้ครับ (ใส่ step=60 เพื่อให้ละเอียดเป็นนาที)
             now_thai = datetime.datetime.now() + datetime.timedelta(hours=7)
-            d_visit = st.date_input("วันที่", now_thai.date())
-            t_in = st.time_input("เวลาเข้า", now_thai.time())
-            t_out = st.time_input("เวลาออก", now_thai.time())
+            now_clean = now_thai.replace(second=0, microsecond=0)
+            
+            c_date1, c_date2, c_date3 = st.columns(3)
+            d_visit = c_date1.date_input("วันที่", now_thai.date())
+            t_in = c_date2.time_input("เวลาเข้า", value=now_clean.time(), step=60) # <--- ใส่ step=60
+            t_out = c_date3.time_input("เวลาออก", value=now_clean.time(), step=60) # <--- ใส่ step=60
             
             objs = st.multiselect("วัตถุประสงค์", ["1.เยี่ยมลูกค้า", "2.เสนอขาย", "3.เก็บเช็ค", "4.แก้ปัญหา", "5.อื่นๆ"])
             
-            # ปัญหา & หมายเหตุ (ตัวที่ชอบหายที่สุด)
-            # ดึงค่าเดิมถ้ามี
+            # ปัญหา & หมายเหตุ
             old_prob = st.session_state['edit_data'].get('problem', "") if st.session_state['edit_mode'] else ""
             old_rem = st.session_state['edit_data'].get('remark', "") if st.session_state['edit_mode'] else ""
             
@@ -464,9 +464,7 @@ def render_sale_report():
             
             if btn_save:
                 if cust_name:
-                    # Save Logic
                     if final_brand and final_prod and final_brand not in ["- ไม่ระบุ -"] and final_prod not in ["- ไม่ระบุ -"]:
-                         # Check duplicate competitor data
                          exists = False
                          if not df_comp.empty:
                              match = df_comp[(df_comp['brand']==final_brand) & (df_comp['product']==final_prod)]
@@ -494,18 +492,16 @@ def render_sale_report():
                     else:
                         append_data("Sale_Reports", row)
                         st.success(f"✅ บันทึก: {default_doc}")
-                        # Clear form state by rerun
                     
                     time.sleep(1)
                     st.rerun()
                 else:
                     st.error("⚠️ ลืมเลือกลูกค้าครับ!")
 
-    # Tab 2 History (เหมือนเดิม)
     with tab2:
         df = get_data("Sale_Reports")
         if not df.empty:
-            df = df.iloc[::-1] # กลับด้าน
+            df = df.iloc[::-1]
             for i, r in df.iterrows():
                 with st.expander(f"{r['doc_no']} - {r['customer_name']}"):
                     st.write(r['problem'])
@@ -1286,6 +1282,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

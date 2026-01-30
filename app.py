@@ -732,7 +732,7 @@ def render_stock_order():
     st.write("---")
 
     # =========================================================
-    # 🟢 6. ส่วนประวัติ (HISTORY) - คงไว้เหมือนเดิม
+    # 🟢 6. ส่วนประวัติ (HISTORY) - แก้เพิ่มชื่อเซลล์ให้แล้วครับ
     # =========================================================
     if 'df_ord' in locals() and not df_ord.empty:
         user_role = st.session_state.get('user_role', 'Sale')
@@ -753,9 +753,12 @@ def render_stock_order():
 
         with st.expander(title, expanded=True):
             if not hist_df.empty:
-                hist_df = hist_df.iloc[::-1]
-                # เลือกคอลัมน์ที่จะโชว์
-                cols = ['id', 'date', 'customer_name', 'code', 'qty', 'status', 'type']
+                hist_df = hist_df.iloc[::-1] # เรียงใหม่เอาล่าสุดขึ้นก่อน
+                
+                # ✅ จุดที่แก้: เพิ่ม 'sales_person' เข้าไปในลิสต์นี้
+                cols = ['id', 'date', 'sales_person', 'customer_name', 'code', 'qty', 'status', 'type']
+                
+                # กรองเอาเฉพาะคอลัมน์ที่มีจริงในไฟล์ (กัน Error จอแดง)
                 show_cols = [c for c in cols if c in hist_df.columns]
                 
                 # ทำสี Status
@@ -764,15 +767,18 @@ def render_stock_order():
                     if val == 'Rejected': c = 'red'
                     elif val == 'Completed': c = 'green'
                     elif val == 'Pending_Manager': c = 'orange'
+                    elif val == 'Cancelled': c = 'gray'
                     return f'color: {c}'
 
                 try:
+                    # พยายามโชว์แบบมีสี
                     st.dataframe(
                         hist_df[show_cols].style.applymap(color_status, subset=['status']),
                         use_container_width=True,
                         hide_index=True
                     )
                 except:
+                    # ถ้าโชว์สีไม่ได้ ให้โชว์ตารางธรรมดา (Safe Mode)
                     st.dataframe(hist_df[show_cols], use_container_width=True)
             else:
                 st.caption("ไม่มีรายการ")
@@ -1379,6 +1385,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

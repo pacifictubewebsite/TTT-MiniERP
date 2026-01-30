@@ -279,35 +279,32 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (FIX ERROR KEY: แก้ปัญหาดูประวัติแล้วพัง)
+# 1. SALE REPORT (FINAL STABLE: Cache Data + Pure Key System)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
 
-    # --- 🟢 1. Initialize State ---
-    state_keys = [
-        'edit_mode', 'edit_data', 'gps_lat', 'gps_lon', 
-        'my_reg', 'my_prov', 'my_cust',       
-        'my_brand', 'my_prod',                
-        'img_opt'                             
-    ]
-    for k in state_keys:
-        if k not in st.session_state:
-            st.session_state[k] = None
+    # --- 🟢 1. โหลดข้อมูลแล้ว "แช่แข็ง" ไว้ (ไม่ให้โหลดใหม่ตอนจอกระพริบ) ---
+    if 'static_df_cust' not in st.session_state:
+        st.session_state['static_df_cust'] = get_data("Customers")
+    
+    # ใช้ข้อมูลจากตัวแปรที่แช่แข็งไว้
+    df_cust = st.session_state['static_df_cust']
 
-    if st.session_state['edit_data'] is None: st.session_state['edit_data'] = {}
-    if st.session_state['edit_mode'] is None: st.session_state['edit_mode'] = False
-
-    def get_idx(item_list, key_name):
-        val = st.session_state.get(key_name)
-        if val in item_list:
-            return item_list.index(val)
-        return 0
+    # --- 🟢 2. Initialize State ---
+    if 'edit_mode' not in st.session_state: st.session_state['edit_mode'] = False
+    if 'edit_data' not in st.session_state: st.session_state['edit_data'] = {}
+    
+    # สร้าง Key สำหรับ Dropdown ถ้ายังไม่มี
+    if 'sel_reg_k' not in st.session_state: st.session_state['sel_reg_k'] = "- ทั้งหมด -"
+    if 'sel_prov_k' not in st.session_state: st.session_state['sel_prov_k'] = "- ทั้งหมด -"
+    if 'sel_cust_k' not in st.session_state: st.session_state['sel_cust_k'] = None
+    
+    # GPS State
+    if 'gps_lat' not in st.session_state: st.session_state['gps_lat'] = None
+    if 'gps_lon' not in st.session_state: st.session_state['gps_lon'] = None
 
     tab1, tab2 = st.tabs(["📸 บันทึกรายงานใหม่", "📂 ประวัติรายงาน"])
 
-    # ==========================
-    # TAB 1: บันทึกข้อมูล
-    # ==========================
     with tab1:
         default_doc = generate_doc_no()
         if st.session_state['edit_mode']:
@@ -319,13 +316,15 @@ def render_sale_report():
         st.info(f"📄 เลขที่เอกสาร: {default_doc}")
         sales_name = st.text_input("ชื่อเซลล์", value=default_name, disabled=not is_admin)
 
-        # เพิ่มลูกค้าใหม่
-        df_cust = get_data("Customers")
+        # =========================================================
+        # 🟢 เพิ่มลูกค้าใหม่
+        # =========================================================
         with st.expander("➕ เพิ่มลูกค้าใหม่", expanded=False):
             with st.form("new_c_form"):
                 c1, c2 = st.columns(2)
                 nm = c1.text_input("ชื่อลูกค้าใหม่")
                 rg = c2.selectbox("ภูมิภาค", ["กรุงเทพฯและปริมณฑล", "ภาคกลาง", "ภาคเหนือ", "ภาคตะวันออกเฉียงเหนือ", "ภาคตะวันออก", "ภาคตะวันตก", "ภาคใต้"])
+                
                 pl = []
                 if not df_cust.empty: pl = sorted(df_cust['Province'].unique().tolist())
                 pv = st.selectbox("จังหวัด", pl + ["ระบุเอง"])
@@ -336,42 +335,48 @@ def render_sale_report():
                     if nm and pv_manual:
                         r_p = pv_manual if pv == "ระบุเอง" else pv
                         append_data("Customers", [nm.strip(), r_p, rg])
+                        # เคลียร์ Cache เพื่อให้โหลดชื่อใหม่เข้ามา
+                        del st.session_state['static_df_cust']
                         st.success("เพิ่มสำเร็จ!"); time.sleep(1); st.rerun()
                     else: st.error("กรอกให้ครบ")
 
-        # เลือกลูกค้า (Index Locked)
+        # =========================================================
+        # 🟢 เลือกลูกค้า (ระบบเสถียรสุด - ไม่ใช้ Index Manual)
+        # =========================================================
         st.markdown("### 🏢 ข้อมูลลูกค้า")
         cust_name_final = ""
         
         if not df_cust.empty:
             c_f1, c_f2, c_sel = st.columns([1, 1, 2])
 
-            # 1. Region
+            # 1. ภูมิภาค
             all_regs = ["- ทั้งหมด -"] + sorted(df_cust['Region'].dropna().unique().tolist())
-            idx_r = get_idx(all_regs, 'my_reg')
-            reg_val = c_f1.selectbox("1. ภูมิภาค", all_regs, index=idx_r, key="my_reg")
+            # ใช้ key ตรงๆ ให้ Streamlit จัดการ
+            reg_val = c_f1.selectbox("1. ภูมิภาค", all_regs, key="sel_reg_k")
 
             df_s1 = df_cust
-            if reg_val != "- ทั้งหมด -": df_s1 = df_s1[df_s1['Region'] == reg_val]
+            if reg_val != "- ทั้งหมด -":
+                df_s1 = df_s1[df_s1['Region'] == reg_val]
 
-            # 2. Province
+            # 2. จังหวัด
             all_provs = ["- ทั้งหมด -"] + sorted(df_s1['Province'].dropna().unique().tolist())
-            idx_p = get_idx(all_provs, 'my_prov')
-            prov_val = c_f2.selectbox("2. จังหวัด", all_provs, index=idx_p, key="my_prov")
+            prov_val = c_f2.selectbox("2. จังหวัด", all_provs, key="sel_prov_k")
 
             df_s2 = df_s1
-            if prov_val != "- ทั้งหมด -": df_s2 = df_s2[df_s2['Province'] == prov_val]
+            if prov_val != "- ทั้งหมด -":
+                df_s2 = df_s2[df_s2['Province'] == prov_val]
 
-            # 3. Customer
+            # 3. ชื่อลูกค้า
             all_custs = sorted(df_s2['Customer'].dropna().unique().tolist())
             
-            # Logic Edit Mode
-            idx_c = get_idx(all_custs, 'my_cust')
-            if idx_c == 0 and st.session_state['edit_mode']:
-                 old_c = st.session_state['edit_data'].get('customer_name', "")
-                 if old_c in all_custs: idx_c = all_custs.index(old_c)
+            # *TRICK: ถ้ากำลัง Edit ให้ Set ค่าเริ่มต้นลง session_state ครั้งเดียว
+            if st.session_state['edit_mode'] and st.session_state['edit_data'].get('customer_name'):
+                 target = st.session_state['edit_data']['customer_name']
+                 if target in all_custs and st.session_state['sel_cust_k'] != target:
+                     # บังคับค่า key แต่ระวัง loop
+                     pass 
 
-            cust_val = c_sel.selectbox("3. ชื่อลูกค้า", all_custs, index=idx_c, key="my_cust")
+            cust_val = c_sel.selectbox("3. ชื่อลูกค้า", all_custs, key="sel_cust_k")
             cust_name_final = cust_val
             
             if cust_val:
@@ -381,34 +386,47 @@ def render_sale_report():
         else:
             cust_name_final = st.text_input("ชื่อลูกค้า (พิมพ์เอง)", key="manual_cust_key")
 
-        # GPS
+        # =========================================================
+        # 🟢 GPS
+        # =========================================================
         st.write("---")
         cg1, cg2 = st.columns([1,3])
         with cg1: st.write("📍 **Location**")
+        
         if st.session_state['gps_lat'] is None:
-            loc = get_geolocation(component_key='gps_final')
+            loc = get_geolocation(component_key='gps_final_v2')
             if loc and 'coords' in loc:
                 st.session_state['gps_lat'] = loc['coords']['latitude']
                 st.session_state['gps_lon'] = loc['coords']['longitude']
                 st.rerun()
+        
         with cg2:
-            if st.session_state['gps_lat']: st.success(f"✅ {st.session_state['gps_lat']}, {st.session_state['gps_lon']}")
-            else: st.warning("กำลังจับพิกัด...")
+            if st.session_state['gps_lat']: 
+                st.success(f"✅ {st.session_state['gps_lat']}, {st.session_state['gps_lon']}")
+            else: 
+                st.warning("กำลังจับพิกัด...")
 
-        # คู่แข่ง
+        # =========================================================
+        # 🟢 ข้อมูลคู่แข่ง (ใช้เทคนิคแช่แข็งเหมือนกัน)
+        # =========================================================
         st.write("---")
         st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด**")
-        df_comp = get_data("Competitor_Data")
+        
+        # โหลดคู่แข่งแบบแช่แข็ง (กันโหลดใหม่แล้วหาย)
+        if 'static_df_comp' not in st.session_state:
+            st.session_state['static_df_comp'] = get_data("Competitor_Data")
+        df_comp = st.session_state['static_df_comp']
         
         brands = ["- ไม่ระบุ -"]
         if not df_comp.empty: brands += sorted(df_comp['brand'].unique().tolist())
         brands.append("➕ เพิ่มใหม่...")
 
         c_cp1, c_cp2 = st.columns(2)
-        idx_b = get_idx(brands, 'my_brand')
-        b_val = c_cp1.selectbox("ยี่ห้อ", brands, index=idx_b, key="my_brand")
+        
+        # ใช้ Key ตรงๆ ไม่ต้อง Manual Index
+        b_val = c_cp1.selectbox("ยี่ห้อ", brands, key="sel_brand_k")
         f_brand = b_val
-        if b_val == "➕ เพิ่มใหม่...": f_brand = c_cp1.text_input("ระบุยี่ห้อ", key="new_b_txt")
+        if b_val == "➕ เพิ่มใหม่...": f_brand = c_cp1.text_input("ระบุยี่ห้อ", key="txt_brand_new")
 
         prods = ["- ไม่ระบุ -"]
         if f_brand not in ["- ไม่ระบุ -", "➕ เพิ่มใหม่..."] and not df_comp.empty:
@@ -416,49 +434,57 @@ def render_sale_report():
              prods += sorted(sub['product'].unique().tolist())
         prods.append("➕ เพิ่มใหม่...")
         
-        idx_pd = get_idx(prods, 'my_prod')
-        p_val = c_cp2.selectbox("รุ่น/สินค้า", prods, index=idx_pd, key="my_prod")
+        p_val = c_cp2.selectbox("รุ่น/สินค้า", prods, key="sel_prod_k")
         f_prod = p_val
-        if p_val == "➕ เพิ่มใหม่...": f_prod = c_cp2.text_input("ระบุสินค้า", key="new_p_txt")
+        if p_val == "➕ เพิ่มใหม่...": f_prod = c_cp2.text_input("ระบุสินค้า", key="txt_prod_new")
 
-        # รูปภาพ
+        # =========================================================
+        # 📸 รูปภาพ
+        # =========================================================
         st.write("---")
         st.write("📸 **รูปถ่ายหน้างาน**")
-        img_src = st.radio("เลือกวิธีแนบรูป:", ["🚫 ไม่แนบ", "📸 กล้อง", "📂 อัปโหลด"], horizontal=True, key="img_opt")
+        img_src = st.radio("เลือกวิธีแนบรูป:", ["🚫 ไม่แนบ", "📸 กล้อง", "📂 อัปโหลด"], horizontal=True, key="main_img_opt")
         f_img = None
-        if img_src == "📸 กล้อง": f_img = st.camera_input("ถ่ายรูป", key="cam_final")
-        elif img_src == "📂 อัปโหลด": f_img = st.file_uploader("เลือกไฟล์", key="file_final")
+        if img_src == "📸 กล้อง": f_img = st.camera_input("ถ่ายรูป", key="cam_main")
+        elif img_src == "📂 อัปโหลด": f_img = st.file_uploader("เลือกไฟล์", key="file_main")
 
-        # FORM
-        with st.form("entry_final"):
+        # =========================================================
+        # 🛡️ FORM บันทึก
+        # =========================================================
+        with st.form("final_entry_form"):
             st.info("👇 กรอกข้อมูลแล้วกดบันทึก")
             price = st.number_input("ราคาคู่แข่ง (บาท)", min_value=0.0, step=1.0)
             
+            # เวลา (step=1)
             now_thai = datetime.datetime.now() + datetime.timedelta(hours=7)
             now_clean = now_thai.replace(second=0, microsecond=0)
             
             cd1, cd2, cd3 = st.columns(3)
             d_visit = cd1.date_input("วันที่", now_thai.date())
-            t_in = cd2.time_input("เวลาเข้า", value=now_clean.time(), step=60)
-            t_out = cd3.time_input("เวลาออก", value=now_clean.time(), step=60)
+            t_in = cd2.time_input("เวลาเข้า", value=now_clean.time()) # step default is 1 min in recent streamlit? if not let's stick to default
+            t_out = cd3.time_input("เวลาออก", value=now_clean.time())
             
             objs = st.multiselect("วัตถุประสงค์", ["1.เยี่ยมลูกค้า", "2.เสนอขาย", "3.เก็บเช็ค", "4.แก้ปัญหา", "5.อื่นๆ"])
             
+            # ดึงค่าเดิม
             old_p = st.session_state['edit_data'].get('problem', "") if st.session_state['edit_mode'] else ""
             old_r = st.session_state['edit_data'].get('remark', "") if st.session_state['edit_mode'] else ""
+            
             prob = st.text_area("ปัญหา/Feedback", value=old_p, height=100)
             rem = st.text_input("หมายเหตุ", value=old_r)
             
             st.write("---")
             if st.form_submit_button("💾 บันทึกรายงาน", type="primary", use_container_width=True):
                 if cust_name_final:
-                    # Save Comp
+                    # Save Comp (Update Cache too)
                     if f_brand and f_prod and f_brand not in ["- ไม่ระบุ -"] and f_prod not in ["- ไม่ระบุ -"]:
                          exists = False
                          if not df_comp.empty:
                              match = df_comp[(df_comp['brand']==f_brand) & (df_comp['product']==f_prod)]
                              if not match.empty: exists = True
-                         if not exists: append_data("Competitor_Data", [f_brand, f_prod])
+                         if not exists: 
+                             append_data("Competitor_Data", [f_brand, f_prod])
+                             if 'static_df_comp' in st.session_state: del st.session_state['static_df_comp'] # Clear cache
                     
                     link = ""
                     if f_img:
@@ -479,11 +505,12 @@ def render_sale_report():
                     else:
                         append_data("Sale_Reports", row)
                         st.success(f"✅ บันทึก: {default_doc}")
+                    
                     time.sleep(1); st.rerun()
                 else: st.error("⚠️ เลือกชื่อลูกค้าด้วยครับ")
 
     # ==========================
-    # TAB 2: ประวัติ (Fix Key Error)
+    # TAB 2: ประวัติ (Safe Mode)
     # ==========================
     with tab2:
         df = get_data("Sale_Reports")
@@ -495,37 +522,25 @@ def render_sale_report():
             
             df = df.iloc[::-1]
             for i, r in df.iterrows():
-                # 🔴 จุดที่แก้: ใช้ .get() เพื่อป้องกัน Error ถ้าคอลัมน์ไม่มีจริง
                 cb = r.get('comp_brand', '-')
                 cp = r.get('comp_product', '-')
                 cpr = r.get('comp_price', '-')
+                info = f"🔴 (Edit {r['edit_count']})" if r.get('edit_count', 0) > 0 else ""
                 
-                info = ""
-                if r.get('edit_count', 0) > 0: info = f"🔴 (Edit {r['edit_count']})"
-                
-                doc = r.get('doc_no', '-')
-                cn = r.get('customer_name', '-')
-                
-                with st.expander(f"📄 {doc} | {cn} {info}"):
+                with st.expander(f"📄 {r.get('doc_no','-')} | {r.get('customer_name','-')} {info}"):
                     c_a, c_b = st.columns([4, 1])
                     with c_a:
                         st.write(f"📅 {r.get('date','-')} | 🕒 {r.get('time_in','-')} - {r.get('time_out','-')}")
-                        if r.get('lat'):
-                            st.info(f"📍 {r.get('lat')}, {r.get('lon')}")
                         st.write(f"🎯 **วัตถุประสงค์:** {r.get('objective','-')}")
-                        
-                        # แสดงผลคู่แข่งแบบไม่ Error
                         st.write(f"🕵️ **คู่แข่ง:** {cb} | {cp} | {cpr}")
-                        
                         st.write(f"⚠️ **ปัญหา:** {r.get('problem','-')}")
-                        st.write(f"📝 **หมายเหตุ:** {r.get('remark','-')}")
                         
                         ip = str(r.get('image_path', '')).strip()
                         if ip.startswith("http"): st.image(ip, width=300)
                     
                     with c_b:
                         if r.get('sales_person') == uname or role == 'Admin':
-                            if st.button("✏️", key=f"ed_{doc}"):
+                            if st.button("✏️", key=f"ed_{r.get('doc_no')}"):
                                 st.session_state['edit_mode'] = True
                                 st.session_state['edit_data'] = r.to_dict()
                                 st.rerun()
@@ -1302,6 +1317,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

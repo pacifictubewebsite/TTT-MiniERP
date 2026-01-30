@@ -437,7 +437,15 @@ def render_sale_report():
         p_val = c_cp2.selectbox("รุ่น/สินค้า", prods, key="sel_prod_k")
         f_prod = p_val
         if p_val == "➕ เพิ่มใหม่...": f_prod = c_cp2.text_input("ระบุสินค้า", key="txt_prod_new")
-
+            
+        3. ราคา 
+        old_price = 0.0
+        if st.session_state['edit_mode']:
+             old_price = float(st.session_state['edit_data'].get('comp_price', 0.0))
+        
+        # ใช้ Key "comp_price_k" เพื่อให้ค่าไม่หายเวลารีเฟรช
+        price_val = c_cp3.number_input("ราคาคู่แข่ง (บาท)", min_value=0.0, step=1.0, value=old_price, key="comp_price_k")
+        
         # =========================================================
         # 📸 รูปภาพ
         # =========================================================
@@ -453,7 +461,6 @@ def render_sale_report():
         # =========================================================
         with st.form("final_entry_form"):
             st.info("👇 กรอกข้อมูลแล้วกดบันทึก")
-            price = st.number_input("ราคาคู่แข่ง (บาท)", min_value=0.0, step=1.0)
             
             # เวลา (step=1)
             now_thai = datetime.datetime.now() + datetime.timedelta(hours=7)
@@ -1317,6 +1324,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

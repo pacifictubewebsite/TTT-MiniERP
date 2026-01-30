@@ -279,22 +279,22 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (FINAL STABLE VERSION: แก้ปัญหา Dropdown หายตอนกดกล้อง/GPS)
+# 1. SALE REPORT (EMERGENCY FIX 13:00 - Fix Index Reset)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     
-    # --- 🟢 1. Initialize State (กันค่าหาย) ---
-    # เราจะประกาศตัวแปรใน session_state ให้ครบทุกตัว กันมันลืม
-    keys_to_init = [
+    # --- 🟢 1. Initialize State (กันค่าหายแบบถาวร) ---
+    # เราต้อง Initialize ค่าให้มันก่อน ไม่งั้นพอมันหาไม่เจอ มันจะ Reset
+    state_keys = [
         'edit_mode', 'edit_data', 'gps_lat', 'gps_lon', 
-        'sel_region', 'sel_prov', 'sel_cust', # เก็บค่า Dropdown ลูกค้า
-        'sel_brand', 'sel_prod', # เก็บค่า Dropdown คู่แข่ง
-        'img_opt' # เก็บค่าเลือกกล้อง
+        'filter_reg', 'filter_prov', 'select_cust_final', # ลูกค้า
+        'sel_brand_stable', 'sel_prod_stable', # คู่แข่ง
+        'img_source_key'
     ]
-    for k in keys_to_init:
+    for k in state_keys:
         if k not in st.session_state:
             st.session_state[k] = None
-    
+            
     if st.session_state['edit_data'] is None: st.session_state['edit_data'] = {}
     if st.session_state['edit_mode'] is None: st.session_state['edit_mode'] = False
 
@@ -339,7 +339,7 @@ def render_sale_report():
                     else: st.error("กรอกข้อมูลไม่ครบ")
 
         # =========================================================
-        # 🟢 3. เลือกลูกค้า (Dropdown ต้องไม่หาย!)
+        # 🟢 3. เลือกลูกค้า (Fix Index Logic)
         # =========================================================
         st.markdown("### 🏢 ข้อมูลลูกค้า")
         cust_name_final = ""
@@ -349,8 +349,12 @@ def render_sale_report():
             
             # --- Filter 1: Region ---
             all_regs = ["- ทั้งหมด -"] + sorted(df_cust['Region'].dropna().unique().tolist())
-            # ใช้ key เพื่อให้ Streamlit จำค่าไว้ แม้หน้าจอรีเฟรช
-            region_val = c_f1.selectbox("1. ภูมิภาค", all_regs, key="sel_region_key")
+            # หา index เดิม
+            idx_r = 0
+            if st.session_state['filter_reg'] in all_regs:
+                idx_r = all_regs.index(st.session_state['filter_reg'])
+            
+            region_val = c_f1.selectbox("1. ภูมิภาค", all_regs, index=idx_r, key="filter_reg")
             
             df_s1 = df_cust
             if region_val != "- ทั้งหมด -":
@@ -358,7 +362,12 @@ def render_sale_report():
             
             # --- Filter 2: Province ---
             all_provs = ["- ทั้งหมด -"] + sorted(df_s1['Province'].dropna().unique().tolist())
-            prov_val = c_f2.selectbox("2. จังหวัด", all_provs, key="sel_prov_key")
+            # หา index เดิม
+            idx_p = 0
+            if st.session_state['filter_prov'] in all_provs:
+                idx_p = all_provs.index(st.session_state['filter_prov'])
+                
+            prov_val = c_f2.selectbox("2. จังหวัด", all_provs, index=idx_p, key="filter_prov")
             
             df_s2 = df_s1
             if prov_val != "- ทั้งหมด -":
@@ -367,14 +376,17 @@ def render_sale_report():
             # --- Select 3: Customer ---
             all_custs = sorted(df_s2['Customer'].dropna().unique().tolist())
             
-            # Logic ดึงค่าเดิมตอน Edit
+            # Logic ดึงค่าเดิม (Edit Mode หรือ ค่าที่เพิ่งเลือกไป)
             idx_c = 0
+            current_cust = st.session_state.get('select_cust_final')
+            
             if st.session_state['edit_mode']:
                 old_c = st.session_state['edit_data'].get('customer_name', "")
                 if old_c in all_custs: idx_c = all_custs.index(old_c)
+            elif current_cust in all_custs:
+                idx_c = all_custs.index(current_cust)
             
-            # ตรงนี้สำคัญ! ใช้ key เพื่อล็อคค่าไว้
-            cust_val = c_sel.selectbox("3. ชื่อลูกค้า", all_custs, index=idx_c, key="sel_cust_key")
+            cust_val = c_sel.selectbox("3. ชื่อลูกค้า", all_custs, index=idx_c, key="select_cust_final")
             cust_name_final = cust_val
             
             # Show Info
@@ -392,7 +404,6 @@ def render_sale_report():
         cg1, cg2 = st.columns([1,3])
         with cg1: st.write("📍 **Location**")
         
-        # ถ้ามีค่าแล้ว ไม่เรียกซ้ำเด็ดขาด
         if st.session_state['gps_lat'] is None:
             loc = get_geolocation(component_key='gps_fixer')
             if loc and 'coords' in loc:
@@ -407,7 +418,7 @@ def render_sale_report():
                 st.warning("กำลังจับพิกัด...")
 
         # =========================================================
-        # 🟢 5. คู่แข่ง (Dropdown ต้องไม่หาย)
+        # 🟢 5. คู่แข่ง (Fix Index Logic)
         # =========================================================
         st.write("---")
         st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด**")
@@ -418,8 +429,14 @@ def render_sale_report():
         brands.append("➕ เพิ่มใหม่...")
         
         cc1, cc2 = st.columns(2)
-        # ใส่ key ให้จำค่า
-        b_val = cc1.selectbox("ยี่ห้อ", brands, key="sel_brand_key")
+        
+        # Brand Index
+        idx_b = 0
+        if st.session_state['sel_brand_stable'] in brands:
+            idx_b = brands.index(st.session_state['sel_brand_stable'])
+            
+        b_val = cc1.selectbox("ยี่ห้อ", brands, index=idx_b, key="sel_brand_stable")
+        
         final_brand = b_val
         if b_val == "➕ เพิ่มใหม่...": final_brand = cc1.text_input("ระบุยี่ห้อ", key="new_brand_txt")
             
@@ -429,18 +446,22 @@ def render_sale_report():
              prods += sorted(sub['product'].unique().tolist())
         prods.append("➕ เพิ่มใหม่...")
         
-        # ใส่ key ให้จำค่า
-        p_val = cc2.selectbox("รุ่น/สินค้า", prods, key="sel_prod_key")
+        # Product Index
+        idx_pd = 0
+        if st.session_state['sel_prod_stable'] in prods:
+            idx_pd = prods.index(st.session_state['sel_prod_stable'])
+            
+        p_val = cc2.selectbox("รุ่น/สินค้า", prods, index=idx_pd, key="sel_prod_stable")
+        
         final_prod = p_val
         if p_val == "➕ เพิ่มใหม่...": final_prod = cc2.text_input("ระบุสินค้า", key="new_prod_txt")
 
         # =========================================================
-        # 📸 6. รูปภาพ (อยู่นอก Form เพื่อให้ Preview ได้ แต่ใช้ Key ล็อคไว้)
+        # 📸 6. รูปภาพ
         # =========================================================
         st.write("---")
         st.write("📸 **รูปถ่ายหน้างาน**")
         
-        # ใช้ Key ล็อคค่า Radio Button
         img_src = st.radio("เลือกวิธีแนบรูป:", ["🚫 ไม่แนบ", "📸 กล้อง", "📂 อัปโหลด"], horizontal=True, key="img_source_key")
         
         f_img = None
@@ -1302,6 +1323,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

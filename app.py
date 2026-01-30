@@ -279,7 +279,7 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (แก้เวลาเป็นไทย +7 ชม.)
+# 1. SALE REPORT (Layout ใหม่: Filter ขึ้นก่อน -> เลือกลูกค้า)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     if 'edit_mode' not in st.session_state:
@@ -294,56 +294,48 @@ def render_sale_report():
         default_name = st.session_state['user_name']
         st.info(f"📄 เลขที่เอกสาร: {default_doc}")
         
+        # --- แถวที่ 1: ชื่อเซลล์ (ซ้าย) ---
         c1, c2 = st.columns(2)
         sales_name = c1.text_input("ชื่อเซลล์", value=default_name, disabled=not is_admin)
+        # (c2 เว้นว่างไว้ก่อน หรือเอาไว้ใส่ลูกค้าตอนจบ)
         
-        # =========================================================
-        # 🟢 ส่วนเลือกข้อมูลลูกค้าแบบใหม่ (กรอง 3 ชั้น + เพิ่มใหม่)
-        # =========================================================
-        
-        # 1. ดึงข้อมูลลูกค้า
+        # ดึงข้อมูลลูกค้า
         df_cust = get_data("Customers")
-        
-        # ตัวแปรสำหรับเก็บค่าสุดท้ายที่จะเอาไปบันทึก
         final_cust_name = ""
-        
-        # ---------------------------------------------------------
-        # ➕ ส่วนปุ่มเพิ่มลูกค้าใหม่ (อยู่ด้านบน ให้กดง่ายๆ)
-        # ---------------------------------------------------------
+
+        # =========================================================
+        # 🟢 ส่วนเพิ่มลูกค้าใหม่ (New Customer) - อยู่บนสุด
+        # =========================================================
         with st.expander("➕ เพิ่มลูกค้าใหม่ (New Customer)", expanded=False):
             with st.form("add_new_cust_form"):
-                st.write("กรอกข้อมูลลูกค้าใหม่")
-                new_c_name = st.text_input("ระบุชื่อลูกค้า (ใหม่)")
+                st.write("📝 **กรอกข้อมูลลูกค้าใหม่**")
+                col_new1, col_new2 = st.columns(2)
+                new_c_name = col_new1.text_input("ระบุชื่อลูกค้า (ใหม่)")
                 
-                # รายชื่อภูมิภาคมาตรฐาน
                 thai_regions = ["กรุงเทพฯและปริมณฑล", "ภาคกลาง", "ภาคเหนือ", "ภาคตะวันออกเฉียงเหนือ", "ภาคตะวันออก", "ภาคตะวันตก", "ภาคใต้"]
-                new_c_region = st.selectbox("เลือกภูมิภาค", thai_regions)
+                new_c_region = col_new2.selectbox("เลือกภูมิภาค", thai_regions)
                 
-                # รายชื่อจังหวัด (ดึงจากที่มีอยู่ หรือจะพิมพ์เองก็ได้ แนะนำให้พิมพ์เองถ้าไม่มีในลิสต์)
                 existing_provs = sorted(df_cust['Province'].unique().tolist()) if not df_cust.empty else []
                 new_c_prov = st.selectbox("เลือก/พิมพ์ จังหวัด", existing_provs + ["อื่น ๆ (ระบุเอง)"])
                 
-                # ถ้าเลือก "อื่นๆ" ให้มีช่องพิมพ์
                 custom_prov = ""
                 if new_c_prov == "อื่น ๆ (ระบุเอง)":
-                    custom_prov = st.text_input("ระบุชื่อจังหวัด")
+                    custom_prov = st.text_input("ระบุชื่อจังหวัด (พิมพ์เอง)")
 
-                submitted = st.form_submit_button("💾 บันทึกลูกค้าใหม่")
-                
-                if submitted:
+                if st.form_submit_button("💾 บันทึกลูกค้าใหม่"):
                     real_prov = custom_prov if new_c_prov == "อื่น ๆ (ระบุเอง)" else new_c_prov
                     
                     if new_c_name and real_prov:
-                        # เช็คก่อนว่าซ้ำไหม
+                        # เช็คซ้ำ (ตัดช่องว่างหน้าหลัง)
+                        new_c_name_clean = new_c_name.strip()
                         is_dup = False
                         if not df_cust.empty:
-                            if new_c_name in df_cust['Customer'].values:
+                            if new_c_name_clean in df_cust['Customer'].str.strip().values:
                                 is_dup = True
                         
                         if not is_dup:
-                            # บันทึกลง Sheet "Customers"
-                            append_data("Customers", [new_c_name, real_prov, new_c_region])
-                            st.success(f"✅ เพิ่มคุณ {new_c_name} เรียบร้อย!")
+                            append_data("Customers", [new_c_name_clean, real_prov, new_c_region])
+                            st.success(f"✅ เพิ่มคุณ {new_c_name_clean} เรียบร้อย!")
                             time.sleep(1)
                             st.rerun()
                         else:
@@ -351,58 +343,80 @@ def render_sale_report():
                     else:
                         st.error("⚠️ กรุณากรอกชื่อและจังหวัด")
 
-        # ---------------------------------------------------------
-        # 🔍 ส่วนค้นหาและกรอง (3 ชั้น: ภูมิภาค -> จังหวัด -> ลูกค้า)
-        # ---------------------------------------------------------
-        st.write("🔍 **ค้นหาลูกค้า (Search Customer)**")
-        
-        # เตรียมข้อมูลสำหรับ Dropdown
+        st.write("---")
+
+        # =========================================================
+        # 🟢 ส่วนค้นหาและกรอง (Filter Section)
+        # =========================================================
         if not df_cust.empty:
-            # ชั้นที่ 1: เลือกภูมิภาค
+            st.write("🔍 **ตัวกรองค้นหา (Filter)**")
+            
+            # จัดวางตัวกรอง 2 ช่อง (ภูมิภาค, จังหวัด)
+            f1, f2 = st.columns(2)
+            
+            # Filter 1: ภูมิภาค
             all_regions = ["- ทั้งหมด -"] + sorted(df_cust['Region'].dropna().unique().tolist())
-            sel_region = st.selectbox("1. ภูมิภาค (Region)", all_regions)
+            sel_region = f1.selectbox("1. กรองภูมิภาค (Region)", all_regions)
             
-            # กรอง data ตามภูมิภาค
+            # กรอง data ตามภูมิภาคทันที
+            filtered_df = df_cust
             if sel_region != "- ทั้งหมด -":
-                filtered_df = df_cust[df_cust['Region'] == sel_region]
-            else:
-                filtered_df = df_cust
+                filtered_df = filtered_df[filtered_df['Region'] == sel_region]
             
-            # ชั้นที่ 2: เลือกจังหวัด (พิมพ์หาได้)
-            all_provs = ["- ทั้งหมด -"] + sorted(filtered_df['Province'].dropna().unique().tolist())
-            sel_prov = st.selectbox("2. จังหวัด (Province)", all_provs)
+            # Filter 2: จังหวัด (เลือกได้เฉพาะจังหวัดในภูมิภาคนั้น)
+            if not filtered_df.empty:
+                all_provs = ["- ทั้งหมด -"] + sorted(filtered_df['Province'].dropna().unique().tolist())
+            else:
+                all_provs = ["- ไม่พบข้อมูล -"]
+                
+            sel_prov = f2.selectbox("2. กรองจังหวัด (Province)", all_provs)
             
             # กรอง data ตามจังหวัด
-            if sel_prov != "- ทั้งหมด -":
+            if sel_prov != "- ทั้งหมด -" and sel_prov != "- ไม่พบข้อมูล -":
                 filtered_df = filtered_df[filtered_df['Province'] == sel_prov]
             
-            # ชั้นที่ 3: เลือกลูกค้า (พิมพ์หาได้)
-            all_customers = sorted(filtered_df['Customer'].dropna().unique().tolist())
+            # =====================================================
+            # 🎯 ส่วนเลือกลูกค้า (Final Selection) - มาโผล่ตรงขวานี้
+            # =====================================================
+            st.write("👇 **เลือกลูกค้าจากรายการด้านล่าง**")
             
-            # ถ้าอยู่ในโหมดแก้ไข ให้พยายามดึงค่าเดิมมาโชว์
-            default_idx = 0
-            edit_cust_val = st.session_state['edit_data'].get('customer_name', "") if st.session_state['edit_mode'] else ""
-            if edit_cust_val in all_customers:
-                default_idx = all_customers.index(edit_cust_val)
+            if not filtered_df.empty:
+                all_customers = sorted(filtered_df['Customer'].dropna().unique().tolist())
                 
-            sel_customer = c2.selectbox("3. ชื่อลูกค้า (Customer)", all_customers, index=default_idx, placeholder="พิมพ์เพื่อค้นหา...", key="main_cust_select")
-            
-            final_cust_name = sel_customer # ค่าที่จะเอาไปบันทึก
-            
-            # แสดงจังหวัดของลูกค้าที่เลือก (Auto info)
-            if sel_customer:
-                match_row = df_cust[df_cust['Customer'] == sel_customer]
-                if not match_row.empty:
-                    st.caption(f"📍 {match_row.iloc[0]['Province']} | {match_row.iloc[0]['Region']}")
+                # เช็คโหมดแก้ไข
+                default_idx = 0
+                edit_cust_val = st.session_state['edit_data'].get('customer_name', "") if st.session_state['edit_mode'] else ""
+                
+                # ถ้ากำลังแก้ ให้พยายามหาว่าลูกค้าเดิมอยู่ในลิสต์ที่กรองมาไหม
+                if edit_cust_val in all_customers:
+                    default_idx = all_customers.index(edit_cust_val)
+                
+                # *** ใส่ placeholder ให้รู้ว่าต้องเลือก ***
+                sel_customer = c2.selectbox(
+                    "3. ชื่อลูกค้า (Customer)", 
+                    all_customers, 
+                    index=default_idx, 
+                    key="main_cust_select",
+                    placeholder="พิมพ์ชื่อเพื่อค้นหา..."
+                )
+                
+                final_cust_name = sel_customer
+                
+                # แสดง Info ใต้ช่องลูกค้า
+                if sel_customer:
+                    match = df_cust[df_cust['Customer'] == sel_customer]
+                    if not match.empty:
+                        # แสดงข้อมูลจังหวัดของลูกค้าที่เลือก (กันลืม)
+                        st.caption(f"📍 {match.iloc[0]['Province']} | {match.iloc[0]['Region']}")
+            else:
+                c2.warning("❌ ไม่พบลูกค้าในเงื่อนไขที่เลือก")
         else:
-            # กรณีเพิ่งเริ่ม ยังไม่มี data ใน sheet
             final_cust_name = c2.text_input("ชื่อลูกค้า (Customer)", value="" if not st.session_state['edit_mode'] else st.session_state['edit_data'].get('customer_name', ""))
             st.warning("⚠️ ยังไม่มีฐานข้อมูลลูกค้า กรุณาเพิ่มลูกค้าใหม่ด้านบน")
 
-        # เปลี่ยนชื่อตัวแปรให้ตรงกับโค้ดเดิม (เพื่อให้ส่วนบันทึกทำงานต่อได้)
-        cust_name = final_cust_name
+        cust_name = final_cust_name 
         
-        # --- 📍 GPS SECTION (Check-in) ---
+        # --- (ส่วน GPS และอื่นๆ เหมือนเดิมต่อจากนี้) ---
         st.write("---")
         st.write("📍 **Check-in ตำแหน่งปัจจุบัน**")
         
@@ -423,7 +437,6 @@ def render_sale_report():
         
         st.caption("ℹ️ หากตำแหน่งไม่ขึ้น ให้รีเฟรชหน้าเว็บ หรือตรวจสอบการอนุญาต Location บนมือถือ")
         st.write("---")
-        # -----------------------------------
 
         # 🕒 แก้เวลาตรงนี้ครับ (ดึงเวลาปัจจุบัน +7 ชม.)
         now_thai = datetime.datetime.now() + datetime.timedelta(hours=7)
@@ -1378,6 +1391,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

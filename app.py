@@ -99,7 +99,7 @@ if not os.path.exists(UPLOAD_FOLDER):
 # 🔐 ข้อมูลผู้ใช้งาน
 USERS = {
     "kitibodee": {"pass": "Qaqcpti67", "role": "Admin", "name": "Kitibodee"},
-    "่่jitpanu": {"pass": "Jitpanu@TTT_2026", "role": "GM", "name": "Jitpanu"},
+    "่่jitpanu": {"pass": "Jitpanu@ttt_2026", "role": "GM", "name": "Jitpanu"},
     "theerapon": {"pass": "Theer@pon_01", "role": "CCO", "name": "Theeraphol"},
     "chaiyakit": {"pass": "Chaiyakit2026", "role": "Sale-CO", "name": "Chaiyakit"},
     "nattapong": {"pass": "Nattapong2026", "role": "Sale", "name": "Nattapong"},
@@ -1259,6 +1259,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

@@ -490,8 +490,16 @@ def render_sale_report():
                             st.write(f"🕵️ **คู่แข่ง:** {row['comp_name']} | {row['comp_product']} | {row['comp_price']}")
                         st.write(f"**ปัญหา:** {row['problem']}")
                         st.write(f"**หมายเหตุ:** {row['remark']}")
-                        if row['image_path'] and os.path.exists(row['image_path']):
-                            st.image(row['image_path'], caption="รูปหน้างาน")
+                        img_source = str(row['image_path']).strip()
+                        
+                        if img_source:
+                            # 1. ถ้าเป็นลิงก์ (ขึ้นต้นด้วย http) -> โชว์เลย
+                            if img_source.startswith("http"):
+                                st.image(img_source, caption="รูปหน้างาน (Online)", use_container_width=True)
+                            
+                            # 2. ถ้าเป็นไฟล์ในเครื่อง (ของเก่า) -> เช็คก่อนว่ามีไฟล์ไหม
+                            elif os.path.exists(img_source):
+                                st.image(img_source, caption="รูปหน้างาน (Local)", use_container_width=True)
                 with col_b:
                     if row['sales_person'] == my_name or user_role == 'Admin':
                         if st.button("✏️ แก้ไข", key=f"edit_{row['doc_no']}"):
@@ -1251,6 +1259,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

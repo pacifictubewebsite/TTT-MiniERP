@@ -279,7 +279,7 @@ def logout():
 # 📝 MODULES
 # ==========================================
 
-# 1. SALE REPORT (Update: GPS Check-in)
+# 1. SALE REPORT (แก้เวลาเป็นไทย +7 ชม.)
 def render_sale_report():
     st.header("📝 Sale Report & Visit Log")
     if 'edit_mode' not in st.session_state:
@@ -303,12 +303,8 @@ def render_sale_report():
         st.write("---")
         st.write("📍 **Check-in ตำแหน่งปัจจุบัน**")
         
-        # ตัวแปรเก็บค่า GPS
         gps_lat = ""
         gps_lon = ""
-        
-        # เรียกใช้ฟังก์ชัน GPS (ถ้ากดปุ่ม มันจะดึงค่ามา)
-        # หมายเหตุ: get_geolocation จะทำงานเมื่อหน้าเว็บโหลดหรือมีการกระตุ้น
         loc = get_geolocation(component_key='get_gps')
         
         if loc and 'coords' in loc:
@@ -318,7 +314,6 @@ def render_sale_report():
         else:
             st.warning("⚠️ กำลังค้นหาตำแหน่ง... (กรุณากด 'Allow' ถ้าเบราว์เซอร์ถาม)")
 
-        # แสดงค่าในช่องที่แก้ไขไม่ได้ (Disabled)
         g1, g2 = st.columns(2)
         g1.text_input("Latitude", value=gps_lat, disabled=True)
         g2.text_input("Longitude", value=gps_lon, disabled=True)
@@ -327,16 +322,19 @@ def render_sale_report():
         st.write("---")
         # -----------------------------------
 
-        now = datetime.datetime.now().replace(second=0, microsecond=0)
+        # 🕒 แก้เวลาตรงนี้ครับ (ดึงเวลาปัจจุบัน +7 ชม.)
+        now_thai = datetime.datetime.now() + datetime.timedelta(hours=7)
+        now_clean = now_thai.replace(second=0, microsecond=0)
+
         t1, t2, t3 = st.columns(3)
-        date_visit = t1.date_input("วันที่", datetime.date.today())
-        time_in = t2.time_input("เวลาเข้า (Check-in)", value=now.time(), step=60) 
-        time_out = t3.time_input("เวลาออก (Check-out)", value=now.time(), step=60)
+        date_visit = t1.date_input("วันที่", now_thai.date()) # ใช้วันที่ไทย
+        time_in = t2.time_input("เวลาเข้า (Check-in)", value=now_clean.time(), step=60) # ใช้เวลาไทย
+        time_out = t3.time_input("เวลาออก (Check-out)", value=now_clean.time(), step=60) # ใช้เวลาไทย
 
         obj_options = ["1.เข้าพบ/เยี่ยมลูกค้า", "2.เสนอขายสินค้า", "3.วางบิลเก็บเช็ค", "4.แก้ปัญหา", "5.อื่นๆ"]
         selected_objs = st.multiselect("วัตถุประสงค์", obj_options)
         
-        # ข้อมูลคู่แข่ง (Cascading)
+        # ... (ส่วนข้อมูลคู่แข่ง เหมือนเดิมครับ) ...
         st.write("---")
         st.write("🕵️ **ข้อมูลคู่แข่ง / ราคาตลาด**")
         
@@ -392,10 +390,13 @@ def render_sale_report():
             if st.button("💾 บันทึกการแก้ไข", type="primary"):
                 current_edit_count = int(st.session_state['edit_data'].get('edit_count', 0)) + 1
                 final_obj = ", ".join(selected_objs)
-                # Note: Edit mode doesn't update GPS for simplicity
                 run_query("update_sale_report", doc_no=default_doc, cust=cust_name, obj=final_obj, prob=problem, rem=remark, edit_count=current_edit_count)
-                log_row = [default_doc, current_edit_count, st.session_state['user_name'], str(datetime.datetime.now()), f"Edit: {remark}"]
+                
+                # Log เวลาแก้ไข (ใช้เวลาไทย)
+                log_time = str(datetime.datetime.now() + datetime.timedelta(hours=7))
+                log_row = [default_doc, current_edit_count, st.session_state['user_name'], log_time, f"Edit: {remark}"]
                 append_data("Sale_Report_Logs", log_row)
+                
                 st.success("✅ แก้ไขเรียบร้อย!")
                 st.session_state['edit_mode'] = False
                 st.session_state['edit_data'] = {}
@@ -420,19 +421,12 @@ def render_sale_report():
                     saved_link = "" 
 
                     if img_file:
-                        # 👇 เปลี่ยนมาเรียกฟังก์ชัน ImgBB (ไม่ต้องส่งชื่อไฟล์ ส่งแค่รูปพอ)
                         with st.spinner("กำลังอัปโหลดรูป..."):
                             saved_link = upload_image_to_imgbb(img_file)
                     
-                    # 🟢 บันทึกข้อมูล (เหมือนเดิม)
-                    row = [
-                        default_doc, 
-                        # ...
-                        saved_link, # เก็บลิงก์ ImgBB ลง Sheet
-                        # ...
-                    ]
-                    
-                    # 🟢 บันทึก GPS ลง Database (Lat, Lon)
+                    # Log เวลาบันทึก (ใช้เวลาไทย)
+                    record_time = str(datetime.datetime.now() + datetime.timedelta(hours=7))
+
                     row = [
                         default_doc, 
                         str(date_visit), 
@@ -441,9 +435,9 @@ def render_sale_report():
                         final_obj, 
                         problem, 
                         remark, 
-                        saved_link, # 👈 แก้ตรงนี้ครับ! (จาก saved_path เป็น saved_link)
+                        saved_link, 
                         0, 
-                        str(datetime.datetime.now()),
+                        record_time, # 🕒 เวลาบันทึกแบบไทย
                         time_in.strftime("%H:%M"), 
                         time_out.strftime("%H:%M"), 
                         final_brand, 
@@ -464,6 +458,7 @@ def render_sale_report():
                 else:
                     st.error("กรุณาใส่ชื่อลูกค้า")
 
+    # ส่วนประวัติ (Tab2) ไม่ต้องแก้เวลา เพราะมันดึง text มาโชว์เฉยๆ
     with tab2:
         df = get_data("Sale_Reports")
         if not df.empty:
@@ -474,6 +469,7 @@ def render_sale_report():
             df = df.sort_values(by='doc_no', ascending=False)
             
             for _, row in df.iterrows():
+                # ... (ส่วนแสดงผลเหมือนเดิมครับ) ...
                 edit_info = ""
                 if row['edit_count'] > 0 and user_role in ['Admin', 'GM', 'CCO', 'Sale-CO']:
                     edit_info = f"🔴 (Edited {row['edit_count']} times)"
@@ -484,7 +480,6 @@ def render_sale_report():
                         if 'time_in' in row and row['time_in']:
                             st.write(f"🕒 **เวลา:** {row['time_in']} - {row['time_out']}")
                         
-                        # 🟢 โชว์พิกัด GPS (ถ้ามี)
                         if 'lat' in row and row['lat'] and row['lat'] != "":
                             st.info(f"📍 **Check-in:** {row['lat']}, {row['lon']}")
                             st.link_button("🗺️ ดูแผนที่ Google Maps", f"https://www.google.com/maps/search/?api=1&query={row['lat']},{row['lon']}")
@@ -497,11 +492,8 @@ def render_sale_report():
                         img_source = str(row['image_path']).strip()
                         
                         if img_source:
-                            # 1. ถ้าเป็นลิงก์ (ขึ้นต้นด้วย http) -> โชว์เลย
                             if img_source.startswith("http"):
                                 st.image(img_source, caption="รูปหน้างาน (Online)", use_container_width=True)
-                            
-                            # 2. ถ้าเป็นไฟล์ในเครื่อง (ของเก่า) -> เช็คก่อนว่ามีไฟล์ไหม
                             elif os.path.exists(img_source):
                                 st.image(img_source, caption="รูปหน้างาน (Local)", use_container_width=True)
                 with col_b:
@@ -1283,6 +1275,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

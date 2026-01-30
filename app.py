@@ -102,12 +102,12 @@ USERS = {
     "jitpanu": {"pass": "Jitpanu@ttt_2026", "role": "GM", "name": "Jitpanu"},
     "theerapon": {"pass": "Theer@pon_01", "role": "CCO", "name": "Theeraphol"},
     "chaiyakit": {"pass": "Chaiyakit2026", "role": "Sale-CO", "name": "Chaiyakit"},
-    "nattapong": {"pass": "Nattapong@pti2024", "role": "Sale", "name": "Nattapong"},
-    "samanan": {"pass": "Samanan2026", "role": "Sale", "name": "Samanan"},
-    "suksun": {"pass": "Suksun2026", "role": "Sale", "name": "Suksun"},
-    "wutthipong": {"pass": "Wutthipong2026", "role": "Sale", "name": "Wutthipong"},
+    "nattapong": {"pass": "Mix@pti2024", "role": "Sale", "name": "Nattapong"},
+    "samanan": {"pass": "Samanan@nan07", "role": "Sale", "name": "Samanan"},
+    "suksun": {"pass": "Suksun@ttt2026", "role": "Sale", "name": "Suksun"},
+    "wutthipong": {"pass": "pom@2499", "role": "Sale", "name": "Wutthipong"},
     "podjana": {"pass": "Podjana@sale002", "role": "Sale", "name": "Pojana"},
-    "siva": {"pass": "Siva2026", "role": "Sale", "name": "Siva"},
+    "siva": {"pass": "Siva@sale_ttt2026", "role": "Sale", "name": "Siva"},
     "sale04": {"pass": "S@le04", "role": "Sale", "name": "Sale04"},
     "vichai": {"pass": "Vichai2026", "role": "WH", "name": "Vichai"}
 }
@@ -1259,6 +1259,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

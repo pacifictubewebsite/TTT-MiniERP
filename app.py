@@ -602,7 +602,7 @@ def render_stock_order():
 
     event = st.dataframe(
         df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], 
-        column_config={"real_stock": "Stock", "reserved_qty": "Jong", "available": "Ready", "unit": "หน่วยนับ"},
+        column_config={"real_stock": "Stock", "reserved_qty": "Item reserved", "available": "Ready", "unit": "หน่วยนับ"},
         use_container_width=True, on_select="rerun", selection_mode="single-row"
     )
 
@@ -1317,6 +1317,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

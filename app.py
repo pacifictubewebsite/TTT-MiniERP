@@ -525,31 +525,34 @@ def render_sale_report():
                                 st.session_state['edit_data'] = r.to_dict()
                                 st.rerun()
                          
-# 2. STOCK & ORDER (ฉบับแก้ไข: ดูประวัติได้ตามสิทธิ์)
+# 2. STOCK & ORDER (Hybrid: สต็อกเดิม + ตะกร้าใหม่ + ลูกค้าอยู่บน)
 def render_stock_order():
-    st.header("🛒 Check Stock & Open Order (ระบบตะกร้า)")
-    
+    st.header("🛒 ระบบสั่งซื้อ & เช็คสต็อก (Stock & Order)")
+
+    # --- 🟢 1. เตรียมตัวแปร (State) ---
     if 'cart' not in st.session_state:
         st.session_state['cart'] = []
-    
-    # 🟢 1. ดึง Inventory
+
+    # --- 🟢 2. โหลดข้อมูล Stock (พร้อมปุ่ม Reset) ---
     df = get_data("Inventory")
     if df.empty:
-        st.warning("⚠️ โหลดข้อมูล Stock ไม่สำเร็จ (ระบบอาจกำลังบันทึกข้อมูล)")
+        st.warning("⚠️ โหลดข้อมูล Stock ไม่สำเร็จ (หรือยังไม่มีสินค้า)")
         if st.button("🔄 กดตรงนี้เพื่อโหลดใหม่ (Refresh)", type="primary"):
             st.rerun()
         return
-    
-    # 🟢 2. ดึง Orders (ต้องดึงตรงนี้ก่อน ถึงจะใช้ df_ord ได้)
+
+    # --- 🟢 3. คำนวณยอดจอง (Logic เดิมที่บอสชอบ) ---
+    # ต้องดึง Orders มาคำนวณว่ามีคนจองไปเท่าไหร่แล้ว
     df_ord = get_data("Orders")
     if not df_ord.empty:
+        # Clean column names
         df_ord.columns = df_ord.columns.str.strip()
         if 'customer_name' not in df_ord.columns and 'customer' in df_ord.columns:
             df_ord.rename(columns={'customer': 'customer_name'}, inplace=True)
 
-    # ... (ส่วนคำนวณ Reserved เหมือนเดิม) ...
     reserved = pd.DataFrame()
     if not df_ord.empty:
+        # สถานะที่ถือว่า "จองของ" อยู่
         active_status = ['Pending_Manager', 'Pending_SaleCO', 'Reserved']
         if 'status' in df_ord.columns:
             pending = df_ord[df_ord['status'].isin(active_status)]
@@ -557,143 +560,222 @@ def render_stock_order():
                 reserved = pending.groupby('code')['qty'].sum().reset_index()
                 reserved.columns = ['code', 'reserved_qty']
     
+    # Merge ยอดจองเข้ากับ Stock
     df['code'] = df['code'].astype(str)
     if not reserved.empty:
         reserved['code'] = reserved['code'].astype(str)
         df = pd.merge(df, reserved, on='code', how='left')
     else:
         df['reserved_qty'] = 0
+        
     df['reserved_qty'] = df['reserved_qty'].fillna(0)
-    df['available'] = df['real_stock'] - df['reserved_qty']
+    df['available'] = df['real_stock'] - df['reserved_qty'] # คงเหลือขายจริง
 
-    # --- ส่วนค้นหาและแสดงผล (เพิ่มตัวกรองหมวดหมู่) ---
-    if 'category' in df.columns:
-        all_cats = df['category'].dropna().unique().tolist()
-        if all_cats:
-            with st.expander("📂 ตัวกรองหมวดหมู่ (Filter Category)"):
-                selected_cats = st.multiselect("เลือกประเภท/สี:", all_cats)
-                if selected_cats:
-                    df = df[df['category'].isin(selected_cats)]
-
-    search = st.text_input("🔍 ค้นหาสินค้า")
-    if search:
-        mask = df['name'].astype(str).str.contains(search, case=False) | df['code'].astype(str).str.contains(search, case=False)
-        df = df[mask]
-
-    event = st.dataframe(
-        df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], 
-        column_config={"real_stock": "Stock", "reserved_qty": "Item reserved", "available": "Ready", "unit": "หน่วยนับ"},
-        use_container_width=True, on_select="rerun", selection_mode="single-row"
-    )
-
-    if event.selection.rows:
-        item = df.iloc[event.selection.rows[0]]
-        st.divider()
-        st.subheader(f"➕ เพิ่มลงตะกร้า: {item['name']}")
-        c1, c2 = st.columns(2)
-        qty = c1.number_input(f"จำนวน ({item['unit']})", min_value=1, value=1)
-        ptype = c2.radio("ราคา", ["Normal", "Special"])
-        price = 0.0
-        if ptype == "Special":
-            price = st.number_input("ระบุราคาพิเศษ", min_value=0.0)
-            st.warning("⚠️ ราคาพิเศษต้องรออนุมัติ")
-
-        if st.button("🛒 ใส่ตะกร้า", type="primary"):
-            cart_item = {"code": item['code'], "name": item['name'], "qty": qty, "unit": item['unit'], "price": price, "type": ptype, "total": qty * price if ptype == "Special" else 0}
-            st.session_state['cart'].append(cart_item)
-            st.success(f"เพิ่ม {item['name']} จำนวน {qty} ลงตะกร้าแล้ว!")
-            time.sleep(0.5)
-            st.rerun()
+    # =========================================================
+    # 🟢 4. ส่วนข้อมูลลูกค้า (ย้ายมาไว้บนสุด ตามสั่ง!)
+    # =========================================================
+    st.markdown("### 👤 ข้อมูลการเปิดบิล (Customer Info)")
+    
+    # เตรียมรายชื่อลูกค้าสำหรับ Dropdown
+    df_cust = get_data("Customers")
+    cust_list = []
+    if not df_cust.empty:
+        cust_list = sorted(df_cust['Customer'].unique().tolist())
+    
+    c_info1, c_info2 = st.columns(2)
+    
+    # ชื่อเซลล์
+    my_name = st.session_state.get('user_name', 'Sales')
+    is_admin = st.session_state.get('user_role') == 'Admin'
+    sales_name = c_info1.text_input("พนักงานขาย", value=my_name, disabled=not is_admin)
+    
+    # ชื่อลูกค้า (Dropdown ค้นหาได้)
+    # ใช้ key เพื่อจำค่า
+    cust_name = c_info2.selectbox("ลูกค้า (Customer)", ["- เลือกลูกค้า -"] + cust_list, key="so_cust_name")
 
     st.divider()
-    st.subheader(f"🛒 ตะกร้าสินค้า ({len(st.session_state['cart'])})")
-    if st.session_state['cart']:
-        cart_df = pd.DataFrame(st.session_state['cart'])
-        st.dataframe(cart_df, use_container_width=True)
-        if st.button("❌ ล้างตะกร้า"):
-            st.session_state['cart'] = []
-            st.rerun()
-        st.write("---")
-        st.write("🚀 **ยืนยันการสั่งซื้อ**")
-        c1, c2 = st.columns(2)
-        s_name = c1.text_input("ชื่อเซลล์", value=st.session_state['user_name'], disabled=True)
-        c_name = c2.text_input("ชื่อลูกค้า (Customer)")
-        if st.button("✅ ยืนยันออเดอร์ (Confirm Order)", type="primary"):
-            if c_name:
-                so_id = generate_so_no()
-                has_special = False
-                # ... (ส่วนส่งเมลเดิม) ...
-                for item in st.session_state['cart']:
-                    status = "Pending_Manager" if item['type'] == "Special" else "Pending_SaleCO"
-                    if item['type'] == "Special": has_special = True
-                    row = [so_id, str(datetime.date.today()), s_name, c_name, item['code'], item['qty'], item['price'], item['total'], item['type'], status]
-                    append_data("Orders", row)
+
+    # =========================================================
+    # 🟢 5. ระบบเลือกสินค้า & ตะกร้า (TAB SYSTEM)
+    # =========================================================
+    tab1, tab2 = st.tabs(["📦 เลือกสินค้า (Stock)", f"🛒 ตะกร้าสินค้า ({len(st.session_state['cart'])})"])
+
+    # --- TAB 1: เลือกสินค้าจาก Stock ---
+    with tab1:
+        # Filter หมวดหมู่
+        if 'category' in df.columns:
+            cats = df['category'].dropna().unique().tolist()
+            if cats:
+                with st.expander("📂 กรองหมวดหมู่สินค้า"):
+                    sel_cats = st.multiselect("เลือกหมวดหมู่:", cats)
+                    if sel_cats: df = df[df['category'].isin(sel_cats)]
+
+        # Search Box
+        search_txt = st.text_input("🔍 ค้นหาสินค้า (ชื่อหรือรหัส)", placeholder="พิมพ์เพื่อค้นหา...")
+        if search_txt:
+            mask = df['name'].astype(str).str.contains(search_txt, case=False) | df['code'].astype(str).str.contains(search_txt, case=False)
+            df = df[mask]
+
+        # ตารางสินค้า (Interactive)
+        st.write("👇 **คลิกที่แถวเพื่อเลือกสินค้า**")
+        event = st.dataframe(
+            df[['code', 'name', 'real_stock', 'reserved_qty', 'available', 'unit']], 
+            column_config={
+                "code": "รหัส",
+                "name": "ชื่อสินค้า",
+                "real_stock": "สต็อกจริง", 
+                "reserved_qty": "จองแล้ว", 
+                "available": "พร้อมขาย", 
+                "unit": "หน่วย"
+            },
+            use_container_width=True, 
+            on_select="rerun", 
+            selection_mode="single-row"
+        )
+
+        # เมื่อเลือกสินค้า -> โชว์ฟอร์มใส่ตะกร้า
+        if event.selection.rows:
+            item = df.iloc[event.selection.rows[0]]
+            
+            st.info(f"✨ คุณเลือก: **{item['name']}** (พร้อมขาย: {item['available']} {item['unit']})")
+            
+            with st.form("add_cart_form"):
+                c_qty, c_type = st.columns(2)
+                qty_val = c_qty.number_input(f"จำนวน ({item['unit']})", min_value=1, value=1)
+                price_type = c_type.radio("ประเภทราคา", ["Normal (ราคาปกติ)", "Special (ราคาพิเศษ)"])
                 
-                st.success(f"🎉 เปิดบิลสำเร็จ! เลขที่: {so_id}")
-                st.session_state['cart'] = []
-                time.sleep(2) 
+                special_price = 0.0
+                if price_type == "Special (ราคาพิเศษ)":
+                    special_price = st.number_input("ระบุราคาพิเศษ (บาท/หน่วย)", min_value=0.0)
+                    st.warning("⚠️ ราคาพิเศษ: ต้องรอ Manager/GM อนุมัติก่อน")
+
+                if st.form_submit_button("🛒 ใส่ตะกร้า"):
+                    # Logic ราคา
+                    final_price = special_price if price_type == "Special (ราคาพิเศษ)" else 0.0 # 0.0 หมายถึงให้ไปดึงราคา Master หรือใส่ทีหลัง
+                    type_code = "Special" if price_type == "Special (ราคาพิเศษ)" else "Normal"
+                    
+                    cart_item = {
+                        "code": item['code'],
+                        "name": item['name'],
+                        "qty": qty_val,
+                        "unit": item['unit'],
+                        "price": final_price,
+                        "type": type_code,
+                        "total": qty_val * final_price
+                    }
+                    st.session_state['cart'].append(cart_item)
+                    st.success(f"✅ เพิ่ม {item['name']} ลงตะกร้าแล้ว")
+                    time.sleep(0.5)
+                    st.rerun()
+
+    # --- TAB 2: ตะกร้าสินค้า (แบบใหม่ ลบได้ทีละตัว) ---
+    with tab2:
+        st.subheader(f"🧾 รายการในตะกร้าของ: {cust_name}")
+        
+        if st.session_state['cart']:
+            # Header
+            c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 2, 1])
+            c1.markdown("**สินค้า**")
+            c2.markdown("**ราคา**")
+            c3.markdown("**จำนวน**")
+            c4.markdown("**รวม**")
+            c5.markdown("**ลบ**")
+            
+            idx_to_remove = None
+            total_amount = 0
+            
+            for i, item in enumerate(st.session_state['cart']):
+                with st.container():
+                    col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
+                    p_txt = f"{item['price']:,.2f}" if item['price'] > 0 else "ตามระบบ"
+                    t_txt = f"{item['total']:,.2f}" if item['total'] > 0 else "-"
+                    
+                    col1.write(f"{item['code']} - {item['name']}")
+                    col2.write(p_txt)
+                    col3.write(f"{item['qty']} {item['unit']}")
+                    col4.write(t_txt)
+                    
+                    if col5.button("🗑️", key=f"del_{i}"):
+                        idx_to_remove = i
+                
+                total_amount += item['total']
+            
+            if idx_to_remove is not None:
+                del st.session_state['cart'][idx_to_remove]
                 st.rerun()
-            else: st.error("กรุณาระบุชื่อลูกค้า")
-    else: st.info("ตะกร้ายังว่างอยู่ เลือกสินค้าด้านบนได้เลย")
+                
+            st.divider()
+            st.write(f"💰 **ยอดรวม (เฉพาะราคาพิเศษ): {total_amount:,.2f} บาท**")
+            
+            # ปุ่มยืนยัน (อยู่ล่างสุดของตะกร้า)
+            if st.button("✅ ยืนยันการสั่งซื้อ (Confirm Order)", type="primary", use_container_width=True):
+                if cust_name != "- เลือกลูกค้า -":
+                    so_id = generate_so_no()
+                    ts = str(datetime.datetime.now() + datetime.timedelta(hours=7))
+                    today_str = str(datetime.date.today())
+                    
+                    # บันทึกลง Sheet
+                    for item in st.session_state['cart']:
+                        status = "Pending_Manager" if item['type'] == "Special" else "Pending_SaleCO"
+                        row = [so_id, today_str, sales_name, cust_name, item['code'], item['qty'], item['price'], item['total'], item['type'], status]
+                        append_data("Orders", row)
+                    
+                    st.success(f"🎉 เปิดบิลสำเร็จ! เลขที่: {so_id}")
+                    st.session_state['cart'] = [] # ล้างตะกร้า
+                    time.sleep(2)
+                    st.rerun()
+                else:
+                    st.error("⚠️ กรุณาเลือกลูกค้าก่อนยืนยันครับ")
+        else:
+            st.info("🛒 ตะกร้าว่างเปล่า เลือกสินค้าจาก Tab แรกได้เลยครับ")
 
     st.write("---")
-    
-    # 🟢🟢🟢 ส่วนประวัติการเปิดบิล (แก้ไขแล้ว) 🟢🟢🟢
-    # เช็คก่อนว่ามี df_ord ไหม (กันเหนียว)
+
+    # =========================================================
+    # 🟢 6. ส่วนประวัติ (HISTORY) - คงไว้เหมือนเดิม
+    # =========================================================
     if 'df_ord' in locals() and not df_ord.empty:
-        user_role = st.session_state['user_role']
-        my_name = st.session_state['user_name']
-
-        # 1. เช็คสิทธิ์: ใครดูทั้งหมดได้บ้าง?
+        user_role = st.session_state.get('user_role', 'Sale')
+        
+        # Filter ตามสิทธิ์
         if user_role in ['Admin', 'GM', 'CCO', 'Sale-CO']:
-            history_df = df_ord.copy()
-            history_title = "📜 ประวัติการเปิดบิลทั้งหมด (All Sale History)"
+            hist_df = df_ord.copy()
+            title = "📜 ประวัติการเปิดบิลทั้งหมด (All History)"
         else:
-            # 2. นอกนั้นดูแค่ของตัวเอง
-            if 'sales_person' in df_ord.columns:
-                history_df = df_ord[df_ord['sales_person'] == my_name]
-            else:
-                history_df = pd.DataFrame() # กัน error
-            history_title = "📜 ประวัติการเปิดบิลของฉัน (My Sale History)"
+            hist_df = df_ord[df_ord['sales_person'] == my_name] if 'sales_person' in df_ord.columns else pd.DataFrame()
+            title = "📜 ประวัติการเปิดบิลของฉัน (My History)"
 
-        # แจ้งเตือนรายการ Rejected (เตือนเฉพาะเจ้าของ)
-        if not df_ord.empty and 'sales_person' in df_ord.columns:
-            my_own_history = df_ord[df_ord['sales_person'] == my_name]
-            if 'status' in my_own_history.columns:
-                rejected_items = my_own_history[my_own_history['status'] == 'Rejected']
-                if not rejected_items.empty:
-                    st.error(f"❌ คุณมี {len(rejected_items)} รายการที่ 'ไม่อนุมัติ' (Rejected) กรุณาตรวจสอบ")
+        # แจ้งเตือน Rejected
+        if not hist_df.empty and 'status' in hist_df.columns:
+            rejected = hist_df[hist_df['status'] == 'Rejected']
+            if not rejected.empty:
+                st.error(f"❌ มี {len(rejected)} รายการถูกปฏิเสธ (Rejected)")
 
-        # แสดงตาราง
-        with st.expander(history_title, expanded=True):
-            if not history_df.empty:
-                history_df = history_df.iloc[::-1] # กลับด้าน (ล่าสุดขึ้นก่อน)
+        with st.expander(title, expanded=True):
+            if not hist_df.empty:
+                hist_df = hist_df.iloc[::-1]
+                # เลือกคอลัมน์ที่จะโชว์
+                cols = ['id', 'date', 'customer_name', 'code', 'qty', 'status', 'type']
+                show_cols = [c for c in cols if c in hist_df.columns]
                 
-                # เพิ่ม sales_person ให้ผู้บริหารเห็น
-                cols_to_show = ['id', 'date', 'sales_person', 'customer_name', 'code', 'qty', 'status']
-                valid_cols = [c for c in cols_to_show if c in history_df.columns]
-                
-                def highlight_status(val):
-                    color = 'black'
-                    if val == 'Rejected': color = 'red'
-                    elif val == 'Completed': color = 'green'
-                    elif val == 'Reserved': color = 'blue'
-                    elif val == 'Pending_Manager': color = 'orange'
-                    elif val == 'Cancelled': color = 'gray'
-                    return f'color: {color}'
+                # ทำสี Status
+                def color_status(val):
+                    c = 'black'
+                    if val == 'Rejected': c = 'red'
+                    elif val == 'Completed': c = 'green'
+                    elif val == 'Pending_Manager': c = 'orange'
+                    return f'color: {c}'
 
                 try:
                     st.dataframe(
-                        history_df[valid_cols].style.applymap(highlight_status, subset=['status']), 
+                        hist_df[show_cols].style.applymap(color_status, subset=['status']),
                         use_container_width=True,
                         hide_index=True
                     )
                 except:
-                    st.dataframe(history_df[valid_cols], use_container_width=True)
+                    st.dataframe(hist_df[show_cols], use_container_width=True)
             else:
-                st.caption("ยังไม่มีประวัติรายการ")
-    else:
-        st.info("ยังไม่มีข้อมูลออเดอร์ในระบบ")
+                st.caption("ไม่มีรายการ")
 
 # 3. MANAGER APPROVE (Update: อนุมัติ/ไม่อนุมัติ รายการต่อรายการ)
 def render_manager():
@@ -1297,6 +1379,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

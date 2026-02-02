@@ -912,12 +912,12 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (ฉบับกู้ชีพ: แก้ข้อมูลไม่มา + ลดหน่วงด้วยปุ่มค้นหา)
+# 5. WH ADMIN (ฉบับ Final: ปลดล็อคตารางให้เลื่อนดูได้ทั้งหมด + ระบบเสถียร)
 def render_wh():
     st.header("🏭 Warehouse Management (ผู้จัดการคลัง)")
 
-    # 🔴 ปุ่มกู้ชีพ: กดเมื่อข้อมูลไม่มา หรือ อยากรีเฟรชใหม่จริงๆ
-    if st.button("🧹 ล้างระบบ/อัปเดตข้อมูลล่าสุด (กดปุ่มนี้ถ้าข้อมูลไม่มา)", type="primary"):
+    # 🔴 ปุ่มกู้ชีพ
+    if st.button("🧹 ล้างระบบ/อัปเดตข้อมูลล่าสุด", type="primary"):
         st.cache_data.clear()
         st.rerun()
 
@@ -927,11 +927,11 @@ def render_wh():
     try:
         df = get_data("Inventory")
     except Exception as e:
-        st.warning(f"⚠️ กำลังเชื่อมต่อ Google Sheet... (ถ้าค้างนานให้กดปุ่ม 'ล้างระบบ' สีแดงข้างบน): {e}")
+        st.warning(f"⚠️ กำลังโหลด... (ถ้าค้างนานกดปุ่มแดงด้านบน): {e}")
         return
 
     if df.empty:
-        st.info("📭 ไม่พบข้อมูลสินค้าใน Stock (หรือกำลังโหลด)")
+        st.info("📭 ไม่พบข้อมูลสินค้า")
         return
 
     # --- Clean Data ---
@@ -940,8 +940,6 @@ def render_wh():
         df = df[df['code'].astype(str).str.strip() != '']
         df = df[~df['code'].astype(str).str.contains("รวม", na=False)] 
         df['real_stock'] = pd.to_numeric(df['real_stock'], errors='coerce').fillna(0)
-        
-        # เติมคอลัมน์ที่ขาด (กัน Error)
         for c in ['remark', 'category', 'name', 'unit']: 
             if c not in df.columns: df[c] = ""
     except Exception as e:
@@ -968,7 +966,6 @@ def render_wh():
         c1.metric("📦 รายการสินค้า", f"{len(df):,}")
         c2.metric("📊 สต็อกคงเหลือ", f"{df['real_stock'].sum():,.0f}")
         
-        # ดึงยอดรับ/จ่าย (ใส่ try-except กันพัง)
         with st.expander("📊 ดูยอดเคลื่อนไหวเดือนนี้ (คลิกเพื่อโหลด)", expanded=True):
             try:
                 df_log = get_data("WH_Logs")
@@ -1026,7 +1023,7 @@ def render_wh():
         except: st.error("โหลด Order ไม่ได้")
 
     # =========================================================
-    # TAB 3: ปรับยอด (ระบบค้นหาแบบกดปุ่ม = ลื่น)
+    # TAB 3: ปรับยอด (โชว์ครบทุกรายการ + เลื่อนได้)
     # =========================================================
     with tab_adj:
         st.subheader("🔧 ปรับยอด / รับเข้า / ตัดมือ")
@@ -1034,28 +1031,40 @@ def render_wh():
         # 1. ค้นหา
         with st.form("search_prod"):
             col_s1, col_s2 = st.columns([4, 1])
-            search_txt = col_s1.text_input("🔍 ค้นหา (รหัส/ชื่อ)", placeholder="พิมพ์แล้วกดปุ่มค้นหา ->")
-            search_btn = col_s2.form_submit_button("🔎 ค้นหา")
+            search_txt = col_s1.text_input("🔍 ค้นหา (รหัส/ชื่อ)", placeholder="พิมพ์เพื่อกรอง หรือปล่อยว่างเพื่อดูทั้งหมด")
+            search_btn = col_s2.form_submit_button("🔎 ค้นหา/รีเซ็ต")
         
         if search_btn and search_txt:
             mask = df['code'].astype(str).str.contains(search_txt, case=False) | df['name'].astype(str).str.contains(search_txt, case=False)
             df_show = df[mask]
         else:
-            df_show = df.iloc[:5] # โชว์แค่นิดเดียวพอ ไม่โหลดหนัก
-            if not search_btn: st.caption("แสดง 5 รายการล่าสุด (พิมพ์เพื่อค้นหาเพิ่ม)")
+            # 🔥 แก้ตรงนี้: ให้โชว์ทั้งหมด (df) แทนที่จะตัดแค่ 5 ตัว
+            # Streamlit จะทำ Scroll ให้เองอัตโนมัติครับ
+            df_show = df 
 
-        # 2. ตารางเลือก
+        # 2. ตารางเลือก (Scrollable)
+        st.caption(f"แสดงรายการทั้งหมด: {len(df_show)} รายการ (คลิกที่แถวเพื่อทำรายการ)")
         event = st.dataframe(
             df_show[['code', 'name', 'real_stock', 'unit', 'remark']],
-            column_config={"real_stock": "คงเหลือ", "remark": "หมายเหตุ (สินค้า)"},
-            on_select="rerun", selection_mode="single-row", use_container_width=True, hide_index=True
+            column_config={
+                "code": "รหัส",
+                "name": "ชื่อสินค้า",
+                "real_stock": "คงเหลือ", 
+                "unit": "หน่วย",
+                "remark": "หมายเหตุ (สินค้า)"
+            },
+            on_select="rerun", 
+            selection_mode="single-row", 
+            use_container_width=True, 
+            hide_index=True,
+            height=400 # กำหนดความสูง เพื่อให้มี Scrollbar ถ้าข้อมูลเยอะ
         )
 
         if event.selection.rows:
             idx = event.selection.rows[0]
             item = df_show.iloc[idx]
             st.divider()
-            st.info(f"📍 เลือก: **{item['name']}** | คงเหลือ: **{item['real_stock']}** {item['unit']}")
+            st.info(f"📍 กำลังจัดการ: **{item['name']}** | คงเหลือ: **{item['real_stock']}** {item['unit']}")
 
             # 3. Form ปรับยอด
             with st.form("adj_action"):
@@ -1113,7 +1122,7 @@ def render_wh():
                 else: st.error("กรอกข้อมูลไม่ครบ")
 
     # =========================================================
-    # TAB 5: ประวัติ (แก้ปัญหาประวัติหาย)
+    # TAB 5: ประวัติ
     # =========================================================
     with tab_hist:
         st.subheader("📜 ประวัติ Log")
@@ -1121,19 +1130,18 @@ def render_wh():
             df_log = get_data("WH_Logs")
             
             if not df_log.empty:
-                # 1. จัดการคอลัมน์ User vs Customer ให้จบ
+                # Handle old 'User' column
                 if 'User' in df_log.columns and 'Customer' not in df_log.columns:
                     df_log = df_log.rename(columns={'User': 'Customer'})
                 
-                # 2. เติมคอลัมน์ WO / Note ถ้าไม่มี (กันพัง)
+                # Ensure all cols
                 req_cols = ['Timestamp', 'Date', 'Action', 'Code', 'Name', 'Qty', 'Unit', 'Customer', 'WO', 'Note']
                 for c in req_cols:
-                    if c not in df_log.columns: df_log[c] = "" # เติมค่าว่าง
+                    if c not in df_log.columns: df_log[c] = ""
 
-                # 3. เรียงลำดับ
                 df_log = df_log.sort_values(by='Timestamp', ascending=False)
 
-                # 4. แสดงผลแบบแก้ไขได้
+                # Editable Table
                 edited_df = st.data_editor(
                     df_log[req_cols],
                     column_config={
@@ -1148,29 +1156,21 @@ def render_wh():
                     hide_index=True, num_rows="fixed", use_container_width=True, key="hist_fix"
                 )
 
-                # 5. ปุ่มบันทึก
                 if st.button("💾 บันทึกการแก้ไขประวัติ"):
-                    # Auto Update Name
                     code_map = dict(zip(df['code'].astype(str), df['name']))
                     edited_df['Name'] = edited_df['Code'].astype(str).map(code_map).fillna(edited_df['Name'])
                     
-                    # แปลงเป็น List
                     data_to_write = edited_df.values.tolist()
-                    
-                    # เขียนลง Sheet (แบบล้างแล้วเขียนใหม่ เพื่อความชัวร์)
                     client = get_gsheet_client()
                     wks = client.open(SHEET_NAME).worksheet("WH_Logs")
                     wks.clear()
-                    wks.append_row(req_cols) # เขียนหัวตารางใหม่ (Customer, WO, Note)
+                    wks.append_row(req_cols)
                     wks.append_rows(data_to_write)
-                    
                     st.success("✅ บันทึกประวัติเรียบร้อย!"); st.cache_data.clear(); time.sleep(1); st.rerun()
             else:
-                st.info("ยังไม่มีประวัติ (หรือกดปุ่ม 'ล้างระบบ' ด้านบนเพื่อลองโหลดใหม่)")
-        
+                st.info("ยังไม่มีประวัติ")
         except Exception as e:
             st.error(f"⚠️ เกิดข้อผิดพลาดในการโหลดประวัติ: {e}")
-            st.button("ลองโหลดใหม่", on_click=st.cache_data.clear)
             
 # 6. SUPPORT (เหมือนเดิม)
 def render_support():
@@ -1391,6 +1391,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

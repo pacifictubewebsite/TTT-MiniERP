@@ -912,18 +912,25 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (Classic Style: ตารางจิ้มเลือก + ปุ่มแยก เพิ่ม/ลด/หมายเหตุ)
+# 5. WH ADMIN (Classic Style: แก้บั๊กนับเกิน + แยกปุ่มหมายเหตุ + สาเหตุไม่บังคับ)
 def render_wh():
     st.header("🏭 Warehouse Management (ผู้จัดการคลัง)")
 
     # ---------------------------------------------------------
-    # 🟢 1. โหลดข้อมูล & กันเลขเบิ้ล (สำคัญมาก ห้ามเอาออก)
+    # 🟢 1. โหลดข้อมูล & ล้างข้อมูลขยะ (CLEAN DATA)
     # ---------------------------------------------------------
     df = get_data("Inventory")
     
     if not df.empty:
-        # 🔥 FIX: ลบรายการซ้ำทันที (แก้ปัญหา 127,898)
+        # 1.1 ลบรายการซ้ำ (กันเลขเบิ้ล 1.2 แสน)
         df = df.drop_duplicates(subset=['code'], keep='first')
+        
+        # 1.2 🔥 HERO FIX: ลบบรรทัดสรุปยอด (ที่เขียนว่า "รวม 365 รายการ") ออก
+        # โดยการเช็คว่าช่อง 'code' ต้องไม่ว่าง และไม่มีคำว่า "รวม"
+        df = df[df['code'].astype(str).str.strip() != '']
+        df = df[~df['code'].astype(str).str.contains("รวม", na=False)]
+        
+        # 1.3 แปลงตัวเลขสต็อกให้ชัวร์
         df['real_stock'] = pd.to_numeric(df['real_stock'], errors='coerce').fillna(0)
     else:
         st.warning("⚠️ ไม่พบข้อมูลสินค้า")
@@ -934,7 +941,7 @@ def render_wh():
     tab_dash, tab_ship, tab_adj, tab_add, tab_hist = st.tabs([
         "📊 Dashboard", 
         "🚚 ตัดของส่ง (Ship)", 
-        "🔧 ปรับยอด/แก้หมายเหตุ", # <--- อันนี้คือหน้าแบบเดิมที่บอสต้องการ
+        "🔧 ปรับยอด/แก้หมายเหตุ", # <--- หน้าแบบเดิมที่บอสถนัด
         "➕ เพิ่มสินค้าใหม่", 
         "📜 ประวัติ"
     ])
@@ -944,7 +951,7 @@ def render_wh():
     # =========================================================
     with tab_dash:
         st.subheader("📈 ภาพรวมคลังสินค้า")
-        total_items = len(df)
+        total_items = len(df) # ตอนนี้จะนับถูกแล้ว (365)
         total_stock = df['real_stock'].sum() if not df.empty else 0
         
         c1, c2 = st.columns(2)
@@ -954,17 +961,16 @@ def render_wh():
         if st.button("🔄 รีเฟรชข้อมูล"): st.rerun()
 
     # =========================================================
-    # TAB 2: SHIP ORDERS (ตัดของส่ง)
+    # TAB 2: SHIP ORDERS
     # =========================================================
     with tab_ship:
-        st.subheader("🚚 รายการรอตัดสต็อก (Ship Orders)")
+        st.subheader("🚚 รายการรอตัดสต็อก")
         df_ord = get_data("Orders")
         
         has_job = False
         if not df_ord.empty:
             df_ord.columns = df_ord.columns.str.strip()
             if 'status' in df_ord.columns:
-                # มองเห็นทุกสถานะที่รอส่ง
                 target = ['Reserved', 'Pending_SaleCO', 'Pending_Manager']
                 pending = df_ord[df_ord['status'].isin(target)]
                 
@@ -977,7 +983,7 @@ def render_wh():
                         with st.expander(f"📦 {oid} | {c_name} ({st_show})"):
                             st.dataframe(items[['code', 'qty', 'status']], use_container_width=True)
                             
-                            if st.button(f"✂️ ตัดสต็อก & ส่งของ ({oid})", key=f"ship_{oid}", type="primary"):
+                            if st.button(f"✂️ ตัดสต็อก ({oid})", key=f"ship_{oid}", type="primary"):
                                 all_ok = True
                                 for _, item in items.iterrows():
                                     row = df[df['code'].astype(str) == str(item['code'])]
@@ -985,8 +991,10 @@ def render_wh():
                                         curr = row['real_stock'].values[0]
                                         new_q = int(curr) - int(item['qty'])
                                         
-                                        # Update & Log
+                                        # Update Stock
                                         run_query("update_stock", code=str(item['code']), new_stock=new_q)
+                                        
+                                        # Log
                                         ts = str(datetime.datetime.now())
                                         d_now = str(datetime.date.today())
                                         i_name = row['name'].values[0]
@@ -999,7 +1007,7 @@ def render_wh():
                                 
                                 if all_ok:
                                     run_query("update_order_status", oid=oid, status="Completed")
-                                    st.success(f"✅ ตัดสต็อก {oid} เรียบร้อย!")
+                                    st.success(f"✅ สำเร็จ! Order {oid}")
                                     time.sleep(1)
                                     st.rerun()
                 else:
@@ -1007,10 +1015,10 @@ def render_wh():
         if not has_job: st.info("ไม่มีออเดอร์")
 
     # =========================================================
-    # TAB 3: ปรับยอด (แบบเดิม: ตารางจิ้ม + ปุ่มแยก)
+    # TAB 3: ปรับยอด & แก้หมายเหตุ (สไตล์เดิมที่บอสต้องการ)
     # =========================================================
     with tab_adj:
-        st.subheader("🔧 ปรับยอดสินค้า & แก้หมายเหตุ")
+        st.subheader("🔧 จัดการสินค้า (ปรับยอด / หมายเหตุ)")
         
         if not df.empty:
             # 1. ค้นหา
@@ -1024,14 +1032,14 @@ def render_wh():
             
             if 'remark' not in df_show.columns: df_show['remark'] = ""
 
-            # 2. ตารางแบบจิ้มเลือก (Interactive Table)
-            st.write("👇 **คลิกที่แถวเพื่อแก้ไข**")
+            # 2. ตารางแบบจิ้มเลือก
+            st.write("👇 **คลิกที่แถวเพื่อจัดการ**")
             event = st.dataframe(
                 df_show[['code', 'name', 'real_stock', 'unit', 'remark']],
                 column_config={
                     "real_stock": "คงเหลือ",
                     "unit": "หน่วย",
-                    "remark": "หมายเหตุ"
+                    "remark": "หมายเหตุ (WH)"
                 },
                 on_select="rerun", 
                 selection_mode="single-row", 
@@ -1041,28 +1049,35 @@ def render_wh():
 
             # 3. เมื่อจิ้มเลือกแถว
             if event.selection.rows:
-                # ดึงข้อมูลแถวที่เลือก
-                selected_index = event.selection.rows[0]
-                item = df_show.iloc[selected_index]
+                idx = event.selection.rows[0]
+                item = df_show.iloc[idx]
                 
                 st.divider()
-                st.info(f"🛠️ กำลังแก้ไข: **{item['name']}** (รหัส: {item['code']})")
-                st.write(f"📦 สต็อกปัจจุบัน: **{item['real_stock']}** {item['unit']}")
+                st.info(f"🛠️ จัดการ: **{item['name']}** (รหัส: {item['code']}) | คงเหลือ: **{item['real_stock']}** {item['unit']}")
 
-                # --- โซน A: แก้หมายเหตุ (แยกปุ่มต่างหาก) ---
+                # --- ส่วนที่ 1: แก้หมายเหตุ (แยกอิสระ) ---
+                st.markdown("##### 📝 หมายเหตุ (สำหรับ WH จำเอง)")
                 c_rem1, c_rem2 = st.columns([3, 1])
-                new_remark = c_rem1.text_input("📝 หมายเหตุ (Remark)", value=str(item['remark']))
-                if c_rem2.button("💾 บันทึกหมายเหตุ", use_container_width=True):
+                # ดึงค่าเดิมมาแสดง
+                curr_remark = str(item['remark']) if str(item['remark']) != "nan" else ""
+                new_remark = c_rem1.text_input("แก้ไขหมายเหตุตรงนี้", value=curr_remark, label_visibility="collapsed")
+                
+                if c_rem2.button("💾 บันทึกหมายเหตุ"):
+                    # อัปเดตเฉพาะหมายเหตุ ไม่ยุ่งกับสต็อก
                     run_query("update_stock", code=str(item['code']), remark=new_remark)
-                    st.success("✅ บันทึกหมายเหตุแล้ว")
-                    time.sleep(1)
+                    st.success("✅ บันทึกหมายเหตุเรียบร้อย!")
+                    time.sleep(0.5)
                     st.rerun()
 
                 st.write("---")
 
-                # --- โซน B: ปรับสต็อก (ปุ่มเพิ่ม / ปุ่มลด แยกกัน) ---
-                qty_input = st.number_input(f"ระบุจำนวน ({item['unit']})", min_value=0, value=0)
-                reason_input = st.text_input("สาเหตุการปรับ", placeholder="เช่น รับเข้า, ของเสีย")
+                # --- ส่วนที่ 2: ปรับสต็อก (เพิ่ม/ลด) ---
+                st.markdown("##### 📦 ปรับยอดสต็อก")
+                
+                c_adj1, c_adj2 = st.columns(2)
+                qty_input = c_adj1.number_input(f"จำนวน ({item['unit']})", min_value=0, value=0)
+                # สาเหตุ (ไม่บังคับ)
+                reason_input = c_adj2.text_input("สาเหตุการปรับ (ไม่บังคับ)", placeholder="ถ้าไม่ใส่จะขึ้นว่า -")
 
                 col_add, col_cut = st.columns(2)
 
@@ -1072,39 +1087,42 @@ def render_wh():
                         new_val = int(item['real_stock']) + qty_input
                         run_query("update_stock", code=str(item['code']), new_stock=new_val)
                         
-                        # Log
+                        # Log (ถ้าไม่ใส่เหตุผล ให้ขีด - ไว้)
+                        final_reason = reason_input if reason_input else "-"
                         ts = str(datetime.datetime.now())
                         d_now = str(datetime.date.today())
                         u_name = st.session_state.get('user_name', 'Admin')
-                        log = [ts, d_now, "Stock In", str(item['code']), item['name'], qty_input, item['unit'], f"{u_name} ({reason_input})"]
+                        
+                        log = [ts, d_now, "Stock In", str(item['code']), item['name'], qty_input, item['unit'], f"{u_name} ({final_reason})"]
                         append_data("WH_Logs", log)
                         
                         st.success(f"✅ รับเข้า {qty_input} สำเร็จ! (ยอดใหม่: {new_val})")
                         time.sleep(1)
                         st.rerun()
                     else:
-                        st.warning("ใส่จำนวนมากกว่า 0")
+                        st.warning("ระบุจำนวนมากกว่า 0")
 
                 # ปุ่มลด (-)
-                if col_cut.button("➖ จ่ายออก/ตัดของเสีย (Stock Out)", use_container_width=True):
+                if col_cut.button("➖ จ่ายออก (Stock Out)", use_container_width=True):
                     if qty_input > 0:
                         new_val = int(item['real_stock']) - qty_input
                         run_query("update_stock", code=str(item['code']), new_stock=new_val)
                         
-                        # Log
+                        final_reason = reason_input if reason_input else "-"
                         ts = str(datetime.datetime.now())
                         d_now = str(datetime.date.today())
                         u_name = st.session_state.get('user_name', 'Admin')
-                        log = [ts, d_now, "Stock Out", str(item['code']), item['name'], qty_input, item['unit'], f"{u_name} ({reason_input})"]
+                        
+                        log = [ts, d_now, "Stock Out", str(item['code']), item['name'], qty_input, item['unit'], f"{u_name} ({final_reason})"]
                         append_data("WH_Logs", log)
                         
-                        st.warning(f"🔻 ตัดออก {qty_input} สำเร็จ! (ยอดใหม่: {new_val})")
+                        st.warning(f"🔻 จ่ายออก {qty_input} สำเร็จ! (ยอดใหม่: {new_val})")
                         time.sleep(1)
                         st.rerun()
                     else:
-                        st.warning("ใส่จำนวนมากกว่า 0")
+                        st.warning("ระบุจำนวนมากกว่า 0")
         else:
-            st.warning("ไม่พบสินค้า")
+            st.warning("ไม่พบรายการสินค้า")
 
     # =========================================================
     # TAB 4: เพิ่มสินค้า
@@ -1355,6 +1373,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

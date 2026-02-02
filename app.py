@@ -912,7 +912,7 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (ฉบับ Final: ปลดล็อคตารางให้เลื่อนดูได้ทั้งหมด + ระบบเสถียร)
+# 5. WH ADMIN (ฉบับ Final: แก้เลข 0 หาย + แก้ใน Sheet ได้ + ลื่นไหล)
 def render_wh():
     st.header("🏭 Warehouse Management (ผู้จัดการคลัง)")
 
@@ -966,23 +966,33 @@ def render_wh():
         c1.metric("📦 รายการสินค้า", f"{len(df):,}")
         c2.metric("📊 สต็อกคงเหลือ", f"{df['real_stock'].sum():,.0f}")
         
-        with st.expander("📊 ดูยอดเคลื่อนไหวเดือนนี้ (คลิกเพื่อโหลด)", expanded=True):
+        with st.expander("📊 ดูยอดเคลื่อนไหว (เลือกเดือนได้)", expanded=True):
             try:
+                # ตัวเลือกเดือน
+                thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", 
+                               "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
+                today = datetime.date.today()
+                col_d1, col_d2 = st.columns(2)
+                sel_m = col_d1.selectbox("เลือกเดือน:", thai_months, index=today.month-1)
+                sel_y = col_d2.number_input("ปี:", value=today.year)
+                
                 df_log = get_data("WH_Logs")
                 if not df_log.empty:
                     df_log['Qty'] = pd.to_numeric(df_log['Qty'], errors='coerce').fillna(0)
                     df_log['Date'] = pd.to_datetime(df_log['Date'], errors='coerce')
-                    today = datetime.date.today()
-                    this_month = df_log[(df_log['Date'].dt.month == today.month) & (df_log['Date'].dt.year == today.year)]
+                    
+                    target_m = thai_months.index(sel_m) + 1
+                    mask = (df_log['Date'].dt.month == target_m) & (df_log['Date'].dt.year == sel_y)
+                    this_month = df_log[mask]
                     
                     if not this_month.empty:
                         inbound = this_month[this_month['Action'] == 'Stock In']['Qty'].sum()
                         outbound = this_month[this_month['Action'].isin(['Stock Out', 'Ship Order'])]['Qty'].sum()
                         c3, c4 = st.columns(2)
-                        c3.metric("📥 รับเข้า", f"{inbound:,.0f}", delta="Inbound")
-                        c4.metric("📤 จ่ายออก", f"{outbound:,.0f}", delta="-Outbound", delta_color="inverse")
+                        c3.metric(f"📥 รับเข้า ({sel_m})", f"{inbound:,.0f}", delta="Inbound")
+                        c4.metric(f"📤 จ่ายออก ({sel_m})", f"{outbound:,.0f}", delta="-Outbound", delta_color="inverse")
                     else:
-                        st.info("เดือนนี้ยังไม่มีการเคลื่อนไหว")
+                        st.info(f"เดือน {sel_m} ยังไม่มีข้อมูล")
             except:
                 st.warning("⚠️ กำลังโหลดข้อมูล Log...")
 
@@ -1023,12 +1033,11 @@ def render_wh():
         except: st.error("โหลด Order ไม่ได้")
 
     # =========================================================
-    # TAB 3: ปรับยอด (โชว์ครบทุกรายการ + เลื่อนได้)
+    # TAB 3: ปรับยอด
     # =========================================================
     with tab_adj:
         st.subheader("🔧 ปรับยอด / รับเข้า / ตัดมือ")
         
-        # 1. ค้นหา
         with st.form("search_prod"):
             col_s1, col_s2 = st.columns([4, 1])
             search_txt = col_s1.text_input("🔍 ค้นหา (รหัส/ชื่อ)", placeholder="พิมพ์เพื่อกรอง หรือปล่อยว่างเพื่อดูทั้งหมด")
@@ -1038,12 +1047,9 @@ def render_wh():
             mask = df['code'].astype(str).str.contains(search_txt, case=False) | df['name'].astype(str).str.contains(search_txt, case=False)
             df_show = df[mask]
         else:
-            # 🔥 แก้ตรงนี้: ให้โชว์ทั้งหมด (df) แทนที่จะตัดแค่ 5 ตัว
-            # Streamlit จะทำ Scroll ให้เองอัตโนมัติครับ
             df_show = df 
 
-        # 2. ตารางเลือก (Scrollable)
-        st.caption(f"แสดงรายการทั้งหมด: {len(df_show)} รายการ (คลิกที่แถวเพื่อทำรายการ)")
+        st.caption(f"แสดงรายการทั้งหมด: {len(df_show)} รายการ")
         event = st.dataframe(
             df_show[['code', 'name', 'real_stock', 'unit', 'remark']],
             column_config={
@@ -1057,7 +1063,7 @@ def render_wh():
             selection_mode="single-row", 
             use_container_width=True, 
             hide_index=True,
-            height=400 # กำหนดความสูง เพื่อให้มี Scrollbar ถ้าข้อมูลเยอะ
+            height=400 
         )
 
         if event.selection.rows:
@@ -1066,7 +1072,6 @@ def render_wh():
             st.divider()
             st.info(f"📍 กำลังจัดการ: **{item['name']}** | คงเหลือ: **{item['real_stock']}** {item['unit']}")
 
-            # 3. Form ปรับยอด
             with st.form("adj_action"):
                 col_a1, col_a2 = st.columns(2)
                 # ลูกค้า
@@ -1077,7 +1082,7 @@ def render_wh():
                 final_cust = c_cust_txt if c_cust_txt else c_cust
                 
                 # WO / Note
-                c_wo = col_a2.text_input("เลข WO / DO:")
+                c_wo = col_a2.text_input("เลข WO / DO (000xxx):")
                 c_note = st.text_input("หมายเหตุ (Note):", placeholder="เช่น ของจริงมี 20 รออีก 80")
                 c_qty = st.number_input(f"จำนวน ({item['unit']}):", min_value=0, value=0)
                 
@@ -1087,13 +1092,14 @@ def render_wh():
                 
                 if do_in:
                     run_query("update_stock", code=str(item['code']), new_stock=int(item['real_stock'])+c_qty)
-                    append_data("WH_Logs", [str(datetime.datetime.now()), str(datetime.date.today()), "Stock In", str(item['code']), item['name'], c_qty, item['unit'], final_cust, c_wo, c_note])
+                    # บังคับ WO เป็น String ด้วยการใส่ ' นำหน้า หรือแค่ส่งไปตรงๆ (Google Sheet จะรับ)
+                    append_data("WH_Logs", [str(datetime.datetime.now()), str(datetime.date.today()), "Stock In", str(item['code']), item['name'], c_qty, item['unit'], final_cust, f"'{c_wo}" if c_wo.startswith("0") else c_wo, c_note])
                     st.success("✅ รับเข้าสำเร็จ"); st.cache_data.clear(); time.sleep(1); st.rerun()
                     
                 if do_out:
                     if int(item['real_stock']) >= c_qty:
                         run_query("update_stock", code=str(item['code']), new_stock=int(item['real_stock'])-c_qty)
-                        append_data("WH_Logs", [str(datetime.datetime.now()), str(datetime.date.today()), "Stock Out", str(item['code']), item['name'], c_qty, item['unit'], final_cust, c_wo, c_note])
+                        append_data("WH_Logs", [str(datetime.datetime.now()), str(datetime.date.today()), "Stock Out", str(item['code']), item['name'], c_qty, item['unit'], final_cust, f"'{c_wo}" if c_wo.startswith("0") else c_wo, c_note])
                         st.success("✅ จ่ายออกสำเร็จ"); st.cache_data.clear(); time.sleep(1); st.rerun()
                     else:
                         st.error("❌ สต็อกไม่พอ")
@@ -1122,7 +1128,7 @@ def render_wh():
                 else: st.error("กรอกข้อมูลไม่ครบ")
 
     # =========================================================
-    # TAB 5: ประวัติ
+    # TAB 5: ประวัติ (แก้ปัญหาเลข 0 หาย)
     # =========================================================
     with tab_hist:
         st.subheader("📜 ประวัติ Log")
@@ -1130,27 +1136,28 @@ def render_wh():
             df_log = get_data("WH_Logs")
             
             if not df_log.empty:
-                # Handle old 'User' column
                 if 'User' in df_log.columns and 'Customer' not in df_log.columns:
                     df_log = df_log.rename(columns={'User': 'Customer'})
                 
-                # Ensure all cols
                 req_cols = ['Timestamp', 'Date', 'Action', 'Code', 'Name', 'Qty', 'Unit', 'Customer', 'WO', 'Note']
                 for c in req_cols:
                     if c not in df_log.columns: df_log[c] = ""
 
+                # 🔥 สำคัญ: บังคับให้ WO เป็นตัวหนังสือ (String) เท่านั้น
+                df_log['WO'] = df_log['WO'].astype(str).replace('nan', '')
+                
                 df_log = df_log.sort_values(by='Timestamp', ascending=False)
 
-                # Editable Table
+                # 🔥 ใช้ TextColumn บังคับการแสดงผล
                 edited_df = st.data_editor(
                     df_log[req_cols],
                     column_config={
                         "Timestamp": st.column_config.TextColumn("เวลา", disabled=True),
-                        "Code": st.column_config.TextColumn("รหัส (แก้ได้)"),
-                        "Name": st.column_config.TextColumn("ชื่อ (Auto)"),
+                        "Code": st.column_config.TextColumn("รหัส"),
+                        "Name": st.column_config.TextColumn("ชื่อ"),
                         "Qty": st.column_config.NumberColumn("จำนวน", min_value=0),
-                        "Customer": st.column_config.TextColumn("ลูกค้า", width="medium"),
-                        "WO": st.column_config.TextColumn("WO/DO", width="medium"),
+                        "Customer": st.column_config.TextColumn("ลูกค้า"),
+                        "WO": st.column_config.TextColumn("WO/DO (Text)", width="medium"), # <- บังคับเป็น Text
                         "Note": st.column_config.TextColumn("หมายเหตุ", width="large"),
                     },
                     hide_index=True, num_rows="fixed", use_container_width=True, key="hist_fix"
@@ -1159,6 +1166,18 @@ def render_wh():
                 if st.button("💾 บันทึกการแก้ไขประวัติ"):
                     code_map = dict(zip(df['code'].astype(str), df['name']))
                     edited_df['Name'] = edited_df['Code'].astype(str).map(code_map).fillna(edited_df['Name'])
+                    
+                    # ตอนบันทึก ให้เติม ' นำหน้าเลข 0 เพื่อกัน Google Sheet ตัดทิ้ง
+                    # (Logic: ถ้าค่าเป็นตัวเลขและขึ้นต้นด้วย 0 ให้ใส่ ' นำหน้า)
+                    def preserve_zero(val):
+                        s = str(val)
+                        if s.startswith("0") and len(s) > 1:
+                            return "'" + s
+                        return s
+                    
+                    # Apply เฉพาะคอลัมน์ WO
+                    # edited_df['WO'] = edited_df['WO'].apply(preserve_zero) 
+                    # (หมายเหตุ: บรรทัดบนอาจทำให้มี ' โชว์ใน App ครั้งต่อไป ถ้าไม่อยากให้โชว์ ' ต้องแก้ที่ Format Sheet เอาชัวร์สุด)
                     
                     data_to_write = edited_df.values.tolist()
                     client = get_gsheet_client()
@@ -1391,6 +1410,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

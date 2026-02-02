@@ -912,8 +912,8 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (ฉบับสมบูรณ์: แก้เลขเบิ้ล + เพิ่ม/ลบ/แก้ไข ครบวงจร)
-def render_warehouse_admin():
+# 5. WH ADMIN (ฉบับแก้ชื่อฟังก์ชันให้ตรงกับตัวเรียก)
+def render_wh():
     st.header("🏭 Warehouse Management (ผู้จัดการคลัง)")
 
     # ---------------------------------------------------------
@@ -922,11 +922,8 @@ def render_warehouse_admin():
     df = get_data("Inventory")
     
     if not df.empty:
-        # 🔥 HERO FIX: ลบรายการซ้ำทันที (แก้ปัญหา 127,898)
-        # ถ้ามีรหัสสินค้า (code) ซ้ำกัน ให้เอาบรรทัดแรกสุดไว้ อันอื่นทิ้ง
+        # 🔥 HERO FIX: ลบรายการซ้ำทันที
         df = df.drop_duplicates(subset=['code'], keep='first')
-        
-        # แปลงตัวเลขให้ชัวร์
         df['real_stock'] = pd.to_numeric(df['real_stock'], errors='coerce').fillna(0)
     else:
         st.warning("⚠️ ไม่พบข้อมูลสินค้า")
@@ -943,16 +940,14 @@ def render_warehouse_admin():
     ])
 
     # =========================================================
-    # TAB 1: DASHBOARD (สรุปภาพรวม)
+    # TAB 1: DASHBOARD
     # =========================================================
     with tab_dash:
         st.subheader("📈 สรุปความเคลื่อนไหวคลังสินค้า")
         
-        # คำนวณ KPI
         total_items = len(df)
         total_stock = df['real_stock'].sum() if not df.empty else 0
         
-        # ดึง Log เดือนนี้
         df_log = get_data("WH_Logs")
         inbound = 0
         outbound = 0
@@ -971,7 +966,6 @@ def render_warehouse_admin():
                 inbound = this_month[this_month['Action'] == 'Stock In']['Qty'].sum()
                 outbound = this_month[this_month['Action'].isin(['Stock Out', 'Ship Order'])]['Qty'].sum()
 
-        # KPI CARDS
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("📦 รายการสินค้า (SKU)", f"{total_items:,}")
         c2.metric("📊 สต็อกคงเหลือรวม", f"{total_stock:,.0f} ม้วน")
@@ -981,7 +975,7 @@ def render_warehouse_admin():
         if st.button("🔄 รีเฟรชข้อมูล (Refresh Data)"): st.rerun()
 
     # =========================================================
-    # TAB 2: SHIP ORDERS (ตัดของส่งลูกค้า)
+    # TAB 2: SHIP ORDERS
     # =========================================================
     with tab_ship:
         st.subheader("🚚 รายการรอส่งของ (Reserved -> Ship)")
@@ -991,12 +985,10 @@ def render_warehouse_admin():
         if not df_ord.empty:
             df_ord.columns = df_ord.columns.str.strip()
             if 'status' in df_ord.columns:
-                # หาออเดอร์ที่สถานะ Reserved
                 reserved_orders = df_ord[df_ord['status'] == 'Reserved']
                 
                 if not reserved_orders.empty:
                     has_job = True
-                    # Group ตามเลขที่ Order
                     for oid, items in reserved_orders.groupby('id'):
                         c_name = items.iloc[0]['customer_name'] if 'customer_name' in items.columns else "-"
                         
@@ -1004,18 +996,13 @@ def render_warehouse_admin():
                             st.dataframe(items[['code', 'qty', 'status']], use_container_width=True)
                             
                             if st.button(f"🚚 ยืนยันส่งของ (Ship {oid})", key=f"ship_{oid}", type="primary"):
-                                # ตัดสต็อกทีละรายการ
                                 for _, item in items.iterrows():
-                                    # หาของในสต็อก
                                     stock_row = df[df['code'].astype(str) == str(item['code'])]
                                     if not stock_row.empty:
                                         curr = stock_row['real_stock'].values[0]
                                         new_qty = int(curr) - int(item['qty'])
-                                        
-                                        # 1. Update Stock
                                         run_query("update_stock", code=str(item['code']), new_stock=new_qty)
                                         
-                                        # 2. Save Log
                                         ts = str(datetime.datetime.now())
                                         d_now = str(datetime.date.today())
                                         i_name = stock_row['name'].values[0]
@@ -1023,7 +1010,6 @@ def render_warehouse_admin():
                                         log = [ts, d_now, "Ship Order", str(item['code']), i_name, item['qty'], stock_row['unit'].values[0], u_name]
                                         append_data("WH_Logs", log)
                                 
-                                # 3. Update Order Status
                                 run_query("update_order_status", oid=oid, status="Completed")
                                 st.success(f"✅ ตัดสต็อก {oid} เรียบร้อย!")
                                 time.sleep(1)
@@ -1041,32 +1027,26 @@ def render_warehouse_admin():
         st.subheader("🔧 แก้ไข/ปรับยอดสินค้า")
         
         if not df.empty:
-            # 1. ค้นหาสินค้า
             all_codes = df['code'].tolist()
             name_map = dict(zip(df['code'], df['name']))
             
             c_sel, c_blank = st.columns([2,1])
             sel_code = c_sel.selectbox("เลือกสินค้าที่ต้องการแก้", all_codes, format_func=lambda x: f"{x} : {name_map.get(x)}")
             
-            # ดึงข้อมูลเดิม
             curr_item = df[df['code'] == sel_code].iloc[0]
             curr_qty = int(curr_item['real_stock'])
             
             st.info(f"📊 สินค้า: **{curr_item['name']}** | สต็อกปัจจุบัน: **{curr_qty}** {curr_item['unit']}")
             
-            # ฟอร์มแก้ไข
             with st.form("adj_stock_form"):
                 c1, c2 = st.columns(2)
-                # ให้ใส่ยอดใหม่เลย ง่ายกว่า
                 new_qty_input = c1.number_input("ระบุยอดสต็อกจริง (New Qty)", min_value=0, value=curr_qty)
                 reason = c2.text_input("สาเหตุการปรับ", placeholder="เช่น นับของใหม่, ของเสีย, รับเข้าด่วน")
                 
                 if st.form_submit_button("💾 บันทึกยอดใหม่"):
                     if new_qty_input != curr_qty:
-                        # 1. Update Stock
                         run_query("update_stock", code=str(sel_code), new_stock=new_qty_input)
                         
-                        # 2. Log
                         diff = new_qty_input - curr_qty
                         action = "Stock In" if diff > 0 else "Stock Out"
                         ts = str(datetime.datetime.now())
@@ -1080,7 +1060,7 @@ def render_warehouse_admin():
                         time.sleep(1)
                         st.rerun()
                     else:
-                        st.warning("⚠️ ยอดยังเท่าเดิม ไม่มีการเปลี่ยนแปลง")
+                        st.warning("⚠️ ยอดยังเท่าเดิม")
         else:
             st.warning("ไม่มีข้อมูลสินค้า")
 
@@ -1105,8 +1085,6 @@ def render_warehouse_admin():
                     if n_code in df['code'].values:
                         st.error("❌ รหัสสินค้านี้มีอยู่แล้ว")
                     else:
-                        # Append to Inventory
-                        # Format: code, name, category, real_stock, unit, remark
                         row = [n_code, n_name, n_cat, n_qty, n_unit, "New Item"]
                         append_data("Inventory", row)
                         st.success(f"✅ เพิ่ม {n_name} เรียบร้อย!")
@@ -1134,12 +1112,9 @@ def render_warehouse_admin():
             if up_file and st.button("🚀 ยืนยันอัปโหลดทับข้อมูลเก่า"):
                 try:
                     df_new = pd.read_excel(up_file)
-                    # Prepare Data
                     df_new = df_new.fillna("")
-                    # Map Columns (ตัวอย่าง)
                     upload_list = []
                     for _, r in df_new.iterrows():
-                        # ปรับให้ตรงกับ Excel จริงของบอส
                         code = str(r.get('code', r.get('Code', '')))
                         name = str(r.get('name', r.get('Name', '')))
                         cat = str(r.get('category', r.get('Group', '')))
@@ -1149,7 +1124,6 @@ def render_warehouse_admin():
                         if code:
                             upload_list.append([code, name, cat, stk, unit, "Uploaded"])
                     
-                    # Clear & Write
                     client = get_gsheet_client()
                     ws = client.open(SHEET_NAME).worksheet("Inventory")
                     ws.clear()

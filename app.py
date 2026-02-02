@@ -912,12 +912,12 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (ฉบับแก้ตาม WH Request: ลูกค้าเป็น Dropdown + พิมพ์เองได้)
+# 5. WH ADMIN (Power User: ตารางประวัติแบบแก้ได้ทุกช่องเหมือน Excel)
 def render_wh():
     st.header("🏭 Warehouse Management (ผู้จัดการคลัง)")
 
     # ---------------------------------------------------------
-    # 🟢 1. โหลดข้อมูล & Clean Data (คงเดิม)
+    # 🟢 1. โหลดข้อมูล & Clean Data
     # ---------------------------------------------------------
     df = get_data("Inventory")
     
@@ -938,11 +938,11 @@ def render_wh():
         "🚚 ตัดของส่ง (Ship)", 
         "🔧 ปรับยอด/ตัดมือ", 
         "➕ เพิ่มสินค้าใหม่", 
-        "📜 ประวัติ"
+        "📜 ประวัติ (แก้ไขได้)" 
     ])
 
     # =========================================================
-    # TAB 1: DASHBOARD (คงเดิม)
+    # TAB 1: DASHBOARD
     # =========================================================
     with tab_dash:
         st.subheader("📈 ภาพรวมคลังสินค้า")
@@ -956,10 +956,10 @@ def render_wh():
         if st.button("🔄 รีเฟรชข้อมูล"): st.rerun()
 
     # =========================================================
-    # TAB 2: SHIP ORDERS (คงเดิม)
+    # TAB 2: SHIP ORDERS
     # =========================================================
     with tab_ship:
-        st.subheader("🚚 รายการรอตัดสต็อก (จาก Sale-CO)")
+        st.subheader("🚚 รายการรอตัดสต็อก")
         df_ord = get_data("Orders")
         has_job = False
         
@@ -1004,7 +1004,7 @@ def render_wh():
         if not has_job: st.info("ไม่มีออเดอร์ค้าง")
 
     # =========================================================
-    # TAB 3: ปรับยอด / ตัดมือ (🔥 แก้จุดนี้จุดเดียวครับ)
+    # TAB 3: ปรับยอด / ตัดมือ
     # =========================================================
     with tab_adj:
         st.subheader("🔧 ปรับยอด / แก้ไขหมายเหตุ")
@@ -1022,7 +1022,6 @@ def render_wh():
                 df_show[['code', 'name', 'real_stock', 'unit', 'remark']],
                 column_config={
                     "real_stock": "คงเหลือ",
-                    "unit": "หน่วย",
                     "remark": "หมายเหตุ (WH)"
                 },
                 on_select="rerun", selection_mode="single-row", use_container_width=True, hide_index=True
@@ -1035,37 +1034,29 @@ def render_wh():
                 st.divider()
                 st.info(f"🛠️ สินค้า: **{item['name']}** ({item['code']}) | คงเหลือ: **{item['real_stock']}**")
 
-                # A: แก้หมายเหตุ (คงเดิม)
-                st.markdown("##### 📝 แก้ไขหมายเหตุ")
+                # A: แก้หมายเหตุ
                 c_rem1, c_rem2 = st.columns([3, 1])
                 curr_rem = str(item['remark']) if str(item['remark']) != "nan" else ""
-                new_rem = c_rem1.text_input("ข้อความหมายเหตุ", value=curr_rem, label_visibility="collapsed")
+                new_rem = c_rem1.text_input("แก้ไขหมายเหตุ:", value=curr_rem)
                 if c_rem2.button("💾 บันทึกหมายเหตุ"):
                     run_query("update_stock", code=str(item['code']), remark=new_rem)
-                    st.success("✅ บันทึกแล้ว")
-                    time.sleep(0.5); st.rerun()
+                    st.success("บันทึกแล้ว"); time.sleep(0.5); st.rerun()
 
                 st.write("---")
 
-                # B: ปรับสต็อก (🔥 แก้ตรงนี้: เพิ่ม Dropdown เลือกชื่อลูกค้า)
+                # B: ปรับสต็อก (เลือกชื่อลูกค้า)
                 st.markdown("##### 📦 ปรับยอดสต็อก (ตัดมือ/รับเข้า)")
                 
-                # 1. โหลดรายชื่อลูกค้ามาใส่ Dropdown
+                # Dropdown เลือกชื่อลูกค้า + พิมพ์เองได้
                 df_cust = get_data("Customers")
-                cust_options = ["- ระบุเอง (พิมพ์ชื่อใหม่) -"]
-                if not df_cust.empty:
-                    cust_options += sorted(df_cust['Customer'].unique().tolist())
+                c_options = ["- ระบุเอง (พิมพ์ชื่อใหม่) -"] + sorted(df_cust['Customer'].unique().tolist()) if not df_cust.empty else []
+                sel_c = st.selectbox("👤 ลูกค้า / ที่มา (พิมพ์ค้นหาได้):", c_options)
                 
-                # Dropdown ให้เลือก (พิมพ์ค้นหาได้ในตัว)
-                selected_cust = st.selectbox("👤 เลือกชื่อลูกค้า / ที่มา (พิมพ์ค้นหาได้):", cust_options)
-                
-                # ถ้าเลือก "ระบุเอง" ให้โชว์ช่องพิมพ์
-                if selected_cust == "- ระบุเอง (พิมพ์ชื่อใหม่) -":
-                    cust_input = st.text_input("ระบุชื่อลูกค้าเอง:", placeholder="เช่น ร้านสมชาย")
+                if sel_c == "- ระบุเอง (พิมพ์ชื่อใหม่) -":
+                    cust_input = st.text_input("พิมพ์ชื่อลูกค้า/สาเหตุ:", placeholder="เช่น ร้านสมชาย")
                 else:
-                    cust_input = selected_cust
+                    cust_input = sel_c
 
-                # 2. จำนวน
                 qty_input = st.number_input(f"จำนวน ({item['unit']})", min_value=0, value=0)
                 
                 c_add, c_cut = st.columns(2)
@@ -1075,35 +1066,27 @@ def render_wh():
                         new_val = int(item['real_stock']) + qty_input
                         run_query("update_stock", code=str(item['code']), new_stock=new_val)
                         
-                        cust_log = cust_input if cust_input else "Manual Add"
+                        clog = cust_input if cust_input else "Manual Add"
                         ts = str(datetime.datetime.now())
                         d_now = str(datetime.date.today())
-                        
-                        log = [ts, d_now, "Stock In", str(item['code']), item['name'], qty_input, item['unit'], cust_log]
-                        append_data("WH_Logs", log)
-                        
-                        st.success(f"✅ รับเข้า {qty_input} (ลูกค้า: {cust_log})")
-                        time.sleep(1); st.rerun()
+                        append_data("WH_Logs", [ts, d_now, "Stock In", str(item['code']), item['name'], qty_input, item['unit'], clog])
+                        st.success(f"✅ รับเข้า {qty_input} สำเร็จ!"); time.sleep(1); st.rerun()
 
-                if c_cut.button("➖ ตัดมือ/จ่ายออก (Stock Out)", use_container_width=True):
+                if c_cut.button("➖ ตัดมือ (Stock Out)", use_container_width=True):
                     if qty_input > 0:
                         new_val = int(item['real_stock']) - qty_input
                         run_query("update_stock", code=str(item['code']), new_stock=new_val)
                         
-                        cust_log = cust_input if cust_input else "Manual Cut"
+                        clog = cust_input if cust_input else "Manual Cut"
                         ts = str(datetime.datetime.now())
                         d_now = str(datetime.date.today())
-                        
-                        log = [ts, d_now, "Stock Out", str(item['code']), item['name'], qty_input, item['unit'], cust_log]
-                        append_data("WH_Logs", log)
-                        
-                        st.warning(f"🔻 ตัดออก {qty_input} (ลูกค้า: {cust_log})")
-                        time.sleep(1); st.rerun()
+                        append_data("WH_Logs", [ts, d_now, "Stock Out", str(item['code']), item['name'], qty_input, item['unit'], clog])
+                        st.warning(f"🔻 ตัดออก {qty_input} สำเร็จ!"); time.sleep(1); st.rerun()
         else:
             st.warning("ไม่พบสินค้า")
 
     # =========================================================
-    # TAB 4: เพิ่มสินค้า (คงเดิม)
+    # TAB 4: เพิ่มสินค้า
     # =========================================================
     with tab_add:
         st.subheader("➕ เพิ่มสินค้าใหม่")
@@ -1122,40 +1105,72 @@ def render_wh():
                     st.success("บันทึกสำเร็จ!"); time.sleep(1); st.rerun()
 
     # =========================================================
-    # TAB 5: ประวัติ (คงเดิม)
+    # TAB 5: ประวัติ (แบบใหม่: แก้ไขได้ทุกช่อง!)
     # =========================================================
     with tab_hist:
-        st.subheader("📜 ประวัติ Log (แก้ไขได้)")
+        st.subheader("📜 ประวัติการเคลื่อนไหว (WH Logs)")
+        st.info("💡 **วิธีแก้:** คลิกที่ช่องข้อมูลที่ต้องการ (ชื่อลูกค้า, จำนวน) แก้ไขเสร็จแล้วกดปุ่ม **'บันทึกการแก้ไขทั้งหมด'** ด้านล่าง")
+        
         df_log = get_data("WH_Logs")
         
         if not df_log.empty:
+            # 1. เตรียมข้อมูล
             df_log = df_log.sort_values(by='Timestamp', ascending=False)
-            df_show = df_log.rename(columns={'User': 'Customer'})
-            cols_show = ['Date', 'Action', 'Code', 'Name', 'Qty', 'Unit', 'Customer']
-            valid = [c for c in cols_show if c in df_show.columns]
+            df_edit = df_log.copy()
+            # เปลี่ยนชื่อหัวตาราง User -> Customer ให้เข้าใจง่าย
+            df_edit = df_edit.rename(columns={'User': 'Customer'})
             
-            st.dataframe(df_show[valid], use_container_width=True, hide_index=True)
+            # 2. แสดงตารางแบบแก้ไขได้ (Data Editor)
+            edited_df = st.data_editor(
+                df_edit,
+                column_config={
+                    "Timestamp": st.column_config.TextColumn("เวลา (ห้ามแก้)", disabled=True),
+                    "Date": st.column_config.TextColumn("วันที่", disabled=True),
+                    "Action": st.column_config.TextColumn("Action", disabled=True),
+                    "Code": st.column_config.TextColumn("รหัส", disabled=True),
+                    "Name": st.column_config.TextColumn("ชื่อสินค้า (แก้ได้)"),
+                    "Qty": st.column_config.NumberColumn("จำนวน (แก้ได้)", min_value=0),
+                    "Unit": st.column_config.TextColumn("หน่วย (แก้ได้)"),
+                    "Customer": st.column_config.TextColumn("ลูกค้า/หมายเหตุ (แก้ได้)", width="large"),
+                },
+                hide_index=True,
+                use_container_width=True,
+                num_rows="fixed", # ไม่ให้เพิ่มแถว แต่แก้ข้อมูลข้างในได้
+                key="history_editor"
+            )
             
-            st.divider()
-            
-            with st.expander("✏️ แก้ไขชื่อลูกค้า/ข้อมูลผิด ในประวัติ", expanded=True):
-                df_log['Label'] = df_log['Timestamp'].astype(str) + " | " + df_log['Name'] + " | " + df_log['User'].astype(str)
-                options = df_log['Label'].tolist()
-                
-                sel_row = st.selectbox("เลือกรายการที่จะแก้:", options)
-                
-                if sel_row:
-                    curr_data = df_log[df_log['Label'] == sel_row].iloc[0]
-                    curr_cust = curr_data['User']
+            # 3. ปุ่มบันทึก (Save Changes)
+            if st.button("💾 บันทึกการแก้ไขทั้งหมด (Save Changes)", type="primary", use_container_width=True):
+                try:
+                    # แปลงกลับ (Customer -> User)
+                    final_df = edited_df.rename(columns={'Customer': 'User'})
                     
-                    new_cust = st.text_input("แก้ไขชื่อลูกค้า (Customer):", value=curr_cust)
+                    # เรียงคอลัมน์ให้ตรงกับ Google Sheet (สำคัญมาก!)
+                    # ต้องตรงกับ: Timestamp, Date, Action, Code, Name, Qty, Unit, User
+                    cols_order = ['Timestamp', 'Date', 'Action', 'Code', 'Name', 'Qty', 'Unit', 'User']
+                    final_df = final_df[cols_order]
                     
-                    if st.button("💾 บันทึกการแก้ไข (Update Log)"):
-                        run_query("update_wh_log", timestamp=str(curr_data['Timestamp']), new_val=new_cust)
-                        st.success("✅ แก้ไขข้อมูลเรียบร้อย!")
-                        time.sleep(1); st.rerun()
+                    # แปลงเป็น List เพื่อเขียนลง Sheet
+                    # หมายเหตุ: การเขียนทับ Log ทั้งหมดอาจใช้เวลาถ้ารายการเยอะ แต่ปลอดภัยสุดสำหรับระบบนี้
+                    data_to_write = final_df.values.tolist()
+                    
+                    client = get_gsheet_client()
+                    sh = client.open(SHEET_NAME)
+                    wks = sh.worksheet("WH_Logs")
+                    
+                    # Clear & Write
+                    wks.clear()
+                    wks.append_row(cols_order) # หัวตาราง
+                    wks.append_rows(data_to_write)
+                    
+                    st.success("✅ บันทึกข้อมูลที่แก้ไขลง Google Sheet เรียบร้อยแล้ว!")
+                    time.sleep(2)
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ เกิดข้อผิดพลาดในการบันทึก: {e}")
         else:
-            st.info("ยังไม่มีประวัติ")
+            st.info("ยังไม่มีประวัติรายการ")
             
 # 6. SUPPORT (เหมือนเดิม)
 def render_support():
@@ -1376,6 +1391,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

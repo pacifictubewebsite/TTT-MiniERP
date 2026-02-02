@@ -912,259 +912,255 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (Update: เพิ่ม Dashboard สรุปยอดรับ-จ่าย)
-def render_wh():
-    st.header("🏭 Warehouse Management")
+# 5. WH ADMIN (ฉบับสมบูรณ์: แก้เลขเบิ้ล + เพิ่ม/ลบ/แก้ไข ครบวงจร)
+def render_warehouse_admin():
+    st.header("🏭 Warehouse Management (ผู้จัดการคลัง)")
+
+    # ---------------------------------------------------------
+    # 🟢 1. โหลดข้อมูล & ล้างข้อมูลซ้ำ (FIX DOUBLE COUNT)
+    # ---------------------------------------------------------
+    df = get_data("Inventory")
     
-    # เพิ่มแท็บ Dashboard ไว้หน้าสุด
-    tab_dash, tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard (ภาพรวม)", "📦 Ship Orders (ตัดสต็อก)", "✏️ Adjust Stock", "📂 Upload Excel", "📜 History"])
-    
-    # --- TAB NEW: Dashboard ---
+    if not df.empty:
+        # 🔥 HERO FIX: ลบรายการซ้ำทันที (แก้ปัญหา 127,898)
+        # ถ้ามีรหัสสินค้า (code) ซ้ำกัน ให้เอาบรรทัดแรกสุดไว้ อันอื่นทิ้ง
+        df = df.drop_duplicates(subset=['code'], keep='first')
+        
+        # แปลงตัวเลขให้ชัวร์
+        df['real_stock'] = pd.to_numeric(df['real_stock'], errors='coerce').fillna(0)
+    else:
+        st.warning("⚠️ ไม่พบข้อมูลสินค้า")
+
+    # ---------------------------------------------------------
+    # 🟢 2. สร้าง TABS เมนูหลัก
+    # ---------------------------------------------------------
+    tab_dash, tab_ship, tab_adj, tab_add, tab_hist = st.tabs([
+        "📊 Dashboard", 
+        "🚚 ตัดของส่ง (Ship)", 
+        "🔧 ปรับยอดสต็อก", 
+        "➕ เพิ่มสินค้าใหม่", 
+        "📜 ประวัติ/Upload"
+    ])
+
+    # =========================================================
+    # TAB 1: DASHBOARD (สรุปภาพรวม)
+    # =========================================================
     with tab_dash:
         st.subheader("📈 สรุปความเคลื่อนไหวคลังสินค้า")
         
-        # 1. ดึงข้อมูล Stock ปัจจุบัน
-        df_inv = get_data("Inventory")
+        # คำนวณ KPI
+        total_items = len(df)
+        total_stock = df['real_stock'].sum() if not df.empty else 0
         
-        # 2. ดึงข้อมูล Log การเคลื่อนไหว (WH_Logs)
+        # ดึง Log เดือนนี้
         df_log = get_data("WH_Logs")
+        inbound = 0
+        outbound = 0
         
-        # เตรียมตัวแปรสำหรับ KPI
-        total_stock_now = 0
-        inbound_month = 0
-        outbound_month = 0
-        
-        # คำนวณ Stock ปัจจุบัน
-        if not df_inv.empty:
-            # แปลงเป็นตัวเลขกันเหนียว
-            df_inv['real_stock'] = pd.to_numeric(df_inv['real_stock'], errors='coerce').fillna(0)
-            total_stock_now = df_inv['real_stock'].sum()
-        
-        # คำนวณยอดรับเข้า/จ่ายออก เดือนนี้
         if not df_log.empty:
-            # แปลงวันที่ให้เป็น datetime
             df_log['Date'] = pd.to_datetime(df_log['Date'], errors='coerce')
             df_log['Qty'] = pd.to_numeric(df_log['Qty'], errors='coerce').fillna(0)
             
-            # กรองเฉพาะเดือนปัจจุบัน
             today = datetime.date.today()
-            this_month_logs = df_log[
+            this_month = df_log[
                 (df_log['Date'].dt.month == today.month) & 
                 (df_log['Date'].dt.year == today.year)
             ]
             
-            if not this_month_logs.empty:
-                # รับเข้า (Stock In)
-                inbound_month = this_month_logs[this_month_logs['Action'] == 'Stock In']['Qty'].sum()
-                
-                # จ่ายออก (Stock Out + Ship Order)
-                out_actions = ['Stock Out', 'Ship Order']
-                outbound_month = this_month_logs[this_month_logs['Action'].isin(out_actions)]['Qty'].sum()
+            if not this_month.empty:
+                inbound = this_month[this_month['Action'] == 'Stock In']['Qty'].sum()
+                outbound = this_month[this_month['Action'].isin(['Stock Out', 'Ship Order'])]['Qty'].sum()
 
-        # --- แสดง KPI Cards ---
-        c1, c2, c3 = st.columns(3)
-        c1.metric("📦 สต็อกคงเหลือ (รวมทุกรุ่น)", f"{total_stock_now:,.0f} ม้วน")
-        c2.metric("📥 รับเข้า (เดือนนี้)", f"{inbound_month:,.0f} ม้วน", delta="Stock In")
-        c3.metric("📤 จ่ายออก/ขาย (เดือนนี้)", f"{outbound_month:,.0f} ม้วน", delta="-Stock Out", delta_color="inverse")
+        # KPI CARDS
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("📦 รายการสินค้า (SKU)", f"{total_items:,}")
+        c2.metric("📊 สต็อกคงเหลือรวม", f"{total_stock:,.0f} ม้วน")
+        c3.metric("📥 รับเข้า (เดือนนี้)", f"{inbound:,.0f}", delta="Inbound")
+        c4.metric("📤 จ่ายออก (เดือนนี้)", f"{outbound:,.0f}", delta="-Outbound", delta_color="inverse")
         
-        st.divider()
-        
-        # --- แสดงกราฟ Top 5 ---
-        col_g1, col_g2 = st.columns(2)
-        
-        with col_g1:
-            st.subheader("📥 Top 5 สินค้ารับเข้าเยอะสุด")
-            if not df_log.empty and not this_month_logs.empty:
-                df_in = this_month_logs[this_month_logs['Action'] == 'Stock In']
-                if not df_in.empty:
-                    top_in = df_in.groupby('Name')['Qty'].sum().sort_values(ascending=False).head(5)
-                    st.bar_chart(top_in, color="#2ecc71") # สีเขียว
-                else:
-                    st.info("เดือนนี้ยังไม่มีการรับของเข้า")
-            else:
-                st.info("ไม่มีข้อมูล")
+        if st.button("🔄 รีเฟรชข้อมูล (Refresh Data)"): st.rerun()
 
-        with col_g2:
-            st.subheader("📤 Top 5 สินค้าเบิกออกเยอะสุด")
-            if not df_log.empty and not this_month_logs.empty:
-                # รวมทั้งเบิกใช้เอง และ ตัดขาย
-                df_out = this_month_logs[this_month_logs['Action'].isin(['Stock Out', 'Ship Order'])]
-                if not df_out.empty:
-                    top_out = df_out.groupby('Name')['Qty'].sum().sort_values(ascending=False).head(5)
-                    st.bar_chart(top_out, color="#e74c3c") # สีแดง
-                else:
-                    st.info("เดือนนี้ยังไม่มีการเบิกของออก")
-            else:
-                st.info("ไม่มีข้อมูล")
-    
-    # --- TAB 1: Ship Orders (เหมือนเดิม) ---
-    with tab1:
+    # =========================================================
+    # TAB 2: SHIP ORDERS (ตัดของส่งลูกค้า)
+    # =========================================================
+    with tab_ship:
         st.subheader("🚚 รายการรอส่งของ (Reserved -> Ship)")
-        st.info("ℹ️ รายการเหล่านี้ Sale-CO จองไว้แล้ว กดตัดสต็อกได้เลย")
-        
         df_ord = get_data("Orders")
-        if df_ord.empty: st.write("ไม่มีข้อมูล"); return
         
-        # Clean columns
-        df_ord.columns = df_ord.columns.str.strip()
-        
-        if 'status' in df_ord.columns:
-            reserved_orders = df_ord[df_ord['status'] == 'Reserved']
-            
-            if reserved_orders.empty:
-                st.success("✅ ไม่มีรายการรอส่งของ")
-            else:
-                order_groups = reserved_orders.groupby('id')
-                for oid, items in order_groups:
-                    cust_name = items.iloc[0]['customer_name'] if 'customer_name' in items.columns else "-"
-                    with st.expander(f"📦 Order: {oid} | ลูกค้า: {cust_name}"):
-                        st.dataframe(items[['code', 'qty', 'status']])
+        has_job = False
+        if not df_ord.empty:
+            df_ord.columns = df_ord.columns.str.strip()
+            if 'status' in df_ord.columns:
+                # หาออเดอร์ที่สถานะ Reserved
+                reserved_orders = df_ord[df_ord['status'] == 'Reserved']
+                
+                if not reserved_orders.empty:
+                    has_job = True
+                    # Group ตามเลขที่ Order
+                    for oid, items in reserved_orders.groupby('id'):
+                        c_name = items.iloc[0]['customer_name'] if 'customer_name' in items.columns else "-"
                         
-                        if st.button("🚚 ตัดสต็อก & ส่งของ (Ship)", key=f"ship_{oid}"):
-                            inv = get_data("Inventory")
-                            # Clean columns inv
-                            inv.columns = inv.columns.str.strip()
+                        with st.expander(f"📦 Order: {oid} | ลูกค้า: {c_name} ({len(items)} รายการ)"):
+                            st.dataframe(items[['code', 'qty', 'status']], use_container_width=True)
                             
-                            for _, item in items.iterrows():
-                                # หา Stock เก่า
-                                match_row = inv.loc[inv['code'].astype(str) == str(item['code'])]
-                                if not match_row.empty:
-                                    curr_stock = match_row['real_stock'].values[0]
-                                    # คำนวณ Stock ใหม่
-                                    new_stock = int(curr_stock) - int(item['qty'])
-                                    # อัปเดต Google Sheet
-                                    run_query("update_stock", code=str(item['code']), new_stock=new_stock)
-                                    
-                                    # บันทึก Log
-                                    ts = str(datetime.datetime.now())
-                                    today = str(datetime.date.today())
-                                    item_name_log = match_row['name'].values[0] if 'name' in match_row else str(item['code'])
-                                    unit_log = match_row['unit'].values[0] if 'unit' in match_row else "-"
-                                    
-                                    log_row = [ts, today, "Ship Order", str(item['code']), item_name_log, item['qty'], unit_log, st.session_state['user_name']]
-                                    append_data("WH_Logs", log_row)
-                            
-                            # อัปเดตสถานะบิลเป็น Completed
-                            run_query("update_order_status", oid=oid, status="Completed")
-                            st.success(f"✅ ตัดสต็อก Order {oid} เรียบร้อย!")
-                            time.sleep(1)
-                            st.rerun()
-        else:
-            st.error("ไม่พบคอลัมน์ status ใน Orders")
+                            if st.button(f"🚚 ยืนยันส่งของ (Ship {oid})", key=f"ship_{oid}", type="primary"):
+                                # ตัดสต็อกทีละรายการ
+                                for _, item in items.iterrows():
+                                    # หาของในสต็อก
+                                    stock_row = df[df['code'].astype(str) == str(item['code'])]
+                                    if not stock_row.empty:
+                                        curr = stock_row['real_stock'].values[0]
+                                        new_qty = int(curr) - int(item['qty'])
+                                        
+                                        # 1. Update Stock
+                                        run_query("update_stock", code=str(item['code']), new_stock=new_qty)
+                                        
+                                        # 2. Save Log
+                                        ts = str(datetime.datetime.now())
+                                        d_now = str(datetime.date.today())
+                                        i_name = stock_row['name'].values[0]
+                                        u_name = st.session_state.get('user_name', 'Admin')
+                                        log = [ts, d_now, "Ship Order", str(item['code']), i_name, item['qty'], stock_row['unit'].values[0], u_name]
+                                        append_data("WH_Logs", log)
+                                
+                                # 3. Update Order Status
+                                run_query("update_order_status", oid=oid, status="Completed")
+                                st.success(f"✅ ตัดสต็อก {oid} เรียบร้อย!")
+                                time.sleep(1)
+                                st.rerun()
+                else:
+                    st.info("✅ เคลียร์ครบแล้ว! ไม่มีรายการค้างส่ง")
+        
+        if not has_job and df_ord.empty:
+            st.info("ไม่มีข้อมูลออเดอร์")
 
-    # --- TAB 2: Adjust Stock (เหมือนเดิม) ---
-    with tab2:
-        df = get_data("Inventory")
+    # =========================================================
+    # TAB 3: ปรับยอดสต็อก (UPDATE STOCK)
+    # =========================================================
+    with tab_adj:
+        st.subheader("🔧 แก้ไข/ปรับยอดสินค้า")
+        
         if not df.empty:
-            search = st.text_input("ค้นหา:", placeholder="Code/Name")
-            if search: 
-                mask = df['code'].astype(str).str.contains(search, case=False) | df['name'].astype(str).str.contains(search, case=False)
-                df = df[mask]
+            # 1. ค้นหาสินค้า
+            all_codes = df['code'].tolist()
+            name_map = dict(zip(df['code'], df['name']))
             
-            if 'remark' not in df.columns: df['remark'] = ""
+            c_sel, c_blank = st.columns([2,1])
+            sel_code = c_sel.selectbox("เลือกสินค้าที่ต้องการแก้", all_codes, format_func=lambda x: f"{x} : {name_map.get(x)}")
             
-            event = st.dataframe(
-                df[['code','name','real_stock','unit', 'remark']], 
-                column_config={"unit": "หน่วยนับ", "remark": "หมายเหตุล่าสุด"}, 
-                on_select="rerun", selection_mode="single-row", use_container_width=True
-            )
+            # ดึงข้อมูลเดิม
+            curr_item = df[df['code'] == sel_code].iloc[0]
+            curr_qty = int(curr_item['real_stock'])
             
-            if event.selection.rows:
-                item = df.iloc[event.selection.rows[0]]
-                st.write("---")
-                st.info(f"สินค้า: {item['name']} | 📦 ของเดิม: {item['real_stock']} {item['unit']}")
-                
-                # โซนจัดการหมายเหตุ
-                c_rem1, c_rem2 = st.columns([3, 1])
-                remark_val = c_rem1.text_input("📝 แก้ไขหมายเหตุ (Internal Note)", value=str(item['remark']))
-                if c_rem2.button("💾 บันทึกหมายเหตุ", use_container_width=True):
-                    run_query("update_stock", code=str(item['code']), remark=remark_val)
-                    st.success("✅ อัปเดตหมายเหตุเรียบร้อย!")
-                    time.sleep(1)
-                    st.rerun()
-                
-                st.write("---")
-                
-                # โซนจัดการสต็อก
-                adjust_label = f"ระบุจำนวนสินค้า ({item['unit']})"
-                adjust_qty = st.number_input(adjust_label, min_value=0, step=1, value=0)
-                
+            st.info(f"📊 สินค้า: **{curr_item['name']}** | สต็อกปัจจุบัน: **{curr_qty}** {curr_item['unit']}")
+            
+            # ฟอร์มแก้ไข
+            with st.form("adj_stock_form"):
                 c1, c2 = st.columns(2)
+                # ให้ใส่ยอดใหม่เลย ง่ายกว่า
+                new_qty_input = c1.number_input("ระบุยอดสต็อกจริง (New Qty)", min_value=0, value=curr_qty)
+                reason = c2.text_input("สาเหตุการปรับ", placeholder="เช่น นับของใหม่, ของเสีย, รับเข้าด่วน")
                 
-                # ปุ่มเพิ่ม
-                if c1.button("➕ เพิ่ม Stock (รับเข้า)", use_container_width=True, type="primary"):
-                    if adjust_qty > 0:
-                        new_val = int(item['real_stock']) + adjust_qty
-                        run_query("update_stock", code=str(item['code']), new_stock=new_val)
+                if st.form_submit_button("💾 บันทึกยอดใหม่"):
+                    if new_qty_input != curr_qty:
+                        # 1. Update Stock
+                        run_query("update_stock", code=str(sel_code), new_stock=new_qty_input)
                         
+                        # 2. Log
+                        diff = new_qty_input - curr_qty
+                        action = "Stock In" if diff > 0 else "Stock Out"
                         ts = str(datetime.datetime.now())
-                        today = str(datetime.date.today())
-                        log_row = [ts, today, "Stock In", str(item['code']), item['name'], adjust_qty, item['unit'], st.session_state['user_name']]
-                        append_data("WH_Logs", log_row)
+                        d_now = str(datetime.date.today())
+                        u_name = st.session_state.get('user_name', 'Admin')
                         
-                        st.success(f"✅ รับเข้า {adjust_qty} เรียบร้อย! (ยอดใหม่: {new_val})")
+                        log = [ts, d_now, action, str(sel_code), curr_item['name'], abs(diff), curr_item['unit'], f"{u_name} ({reason})"]
+                        append_data("WH_Logs", log)
+                        
+                        st.success(f"✅ อัปเดต {sel_code} เป็น {new_qty_input} สำเร็จ!")
                         time.sleep(1)
                         st.rerun()
-                    else: st.warning("ระบุจำนวน > 0")
-
-                # ปุ่มลด
-                if c2.button("➖ ตัด Stock (จ่ายออก)", use_container_width=True):
-                    if adjust_qty > 0:
-                        new_val = int(item['real_stock']) - adjust_qty
-                        run_query("update_stock", code=str(item['code']), new_stock=new_val)
-                        
-                        ts = str(datetime.datetime.now())
-                        today = str(datetime.date.today())
-                        log_row = [ts, today, "Stock Out", str(item['code']), item['name'], adjust_qty, item['unit'], st.session_state['user_name']]
-                        append_data("WH_Logs", log_row)
-                        
-                        st.warning(f"🔻 จ่ายออก {adjust_qty} เรียบร้อย! (ยอดใหม่: {new_val})")
-                        time.sleep(1)
-                        st.rerun()
-                    else: st.warning("ระบุจำนวน > 0")
-
-    # --- TAB 3: Upload Excel (เหมือนเดิม) ---
-    with tab3:
-        st.warning("⚠️ การ Upload Excel จะลบข้อมูลเดิมทั้งหมด")
-        up = st.file_uploader("เลือกไฟล์ Excel Stock (.xlsx)", type=['xlsx'])
-        if up and st.button("🚀 เริ่มอัปโหลด"):
-            try:
-                df_new = pd.read_excel(up)
-                df_new.columns = df_new.columns.str.strip()
-                df_new['Stock'] = pd.to_numeric(df_new['Stock'], errors='coerce').fillna(0)
-                df_new = df_new.fillna("")
-                upload_data = []
-                for _, r in df_new.iterrows():
-                    row = [str(r['code']), str(r['กลุ่ม']), str(r['รายละเอียด']), int(r['Stock']), str(r['หน่วยนับขนาน']), ""]
-                    upload_data.append(row)
-                client = get_gsheet_client()
-                wks = client.open(SHEET_NAME).worksheet("Inventory")
-                wks.clear()
-                wks.append_row(['code', 'category', 'name', 'real_stock', 'unit', 'remark'])
-                wks.append_rows(upload_data)
-                st.success(f"✅ อัปโหลดสำเร็จ {len(upload_data)} รายการ!")
-                time.sleep(2)
-                st.rerun()
-            except Exception as e:
-                st.error(f"เกิดข้อผิดพลาด: {e}")
-
-    # --- TAB 4: History (เหมือนเดิม) ---
-    with tab4:
-        st.subheader("📜 ประวัติการ รับเข้า/จ่ายออก")
-        sel_date = st.date_input("เลือกวันที่ดูประวัติ", datetime.date.today())
-        df_log = get_data("WH_Logs")
-        if not df_log.empty:
-            df_log['Date'] = pd.to_datetime(df_log['Date'], errors='coerce').dt.date.astype(str)
-            # แปลงเป็น String เพื่อเทียบกับ input
-            daily_log = df_log[df_log['Date'] == str(sel_date)]
-            if not daily_log.empty:
-                daily_log = daily_log.sort_values(by='Timestamp', ascending=False)
-                st.info(f"📅 รายการประจำวันที่: {sel_date}")
-                st.dataframe(daily_log[['Timestamp', 'Action', 'Name', 'Qty', 'Unit', 'User']], hide_index=True, use_container_width=True)
-            else:
-                st.warning(f"🚫 ไม่พบรายการเคลื่อนไหวในวันที่ {sel_date}")
+                    else:
+                        st.warning("⚠️ ยอดยังเท่าเดิม ไม่มีการเปลี่ยนแปลง")
         else:
-            st.warning("ยังไม่มีประวัติการใช้งาน")
+            st.warning("ไม่มีข้อมูลสินค้า")
+
+    # =========================================================
+    # TAB 4: เพิ่มสินค้าใหม่ (ADD NEW SKU)
+    # =========================================================
+    with tab_add:
+        st.subheader("➕ เพิ่มสินค้าใหม่เข้าสู่ระบบ")
+        
+        with st.form("add_new_sku"):
+            c1, c2 = st.columns(2)
+            n_code = c1.text_input("รหัสสินค้า (Code)", placeholder="เช่น KG-NEW-001")
+            n_name = c2.text_input("ชื่อสินค้า (Name)")
+            
+            c3, c4, c5 = st.columns(3)
+            n_qty = c3.number_input("จำนวนตั้งต้น", min_value=0, value=0)
+            n_unit = c4.text_input("หน่วยนับ", value="ม้วน")
+            n_cat = c5.text_input("หมวดหมู่", placeholder="เช่น สายยาง")
+            
+            if st.form_submit_button("💾 สร้างสินค้าใหม่"):
+                if n_code and n_name:
+                    if n_code in df['code'].values:
+                        st.error("❌ รหัสสินค้านี้มีอยู่แล้ว")
+                    else:
+                        # Append to Inventory
+                        # Format: code, name, category, real_stock, unit, remark
+                        row = [n_code, n_name, n_cat, n_qty, n_unit, "New Item"]
+                        append_data("Inventory", row)
+                        st.success(f"✅ เพิ่ม {n_name} เรียบร้อย!")
+                        time.sleep(1)
+                        st.rerun()
+                else:
+                    st.error("⚠️ กรุณากรอกรหัสและชื่อสินค้า")
+
+    # =========================================================
+    # TAB 5: ประวัติ & UPLOAD
+    # =========================================================
+    with tab_hist:
+        sub_t1, sub_t2 = st.tabs(["📜 ประวัติ Log", "📂 Upload Excel"])
+        
+        with sub_t1:
+            st.write("ประวัติการเคลื่อนไหว (รับเข้า/จ่ายออก)")
+            if not df_log.empty:
+                st.dataframe(df_log.sort_values(by='Timestamp', ascending=False), use_container_width=True, hide_index=True)
+            else:
+                st.info("ยังไม่มีประวัติ")
+                
+        with sub_t2:
+            st.warning("⚠️ การอัปโหลดไฟล์ Excel จะ **ทับข้อมูลเก่าทั้งหมด** ใน Stock")
+            up_file = st.file_uploader("เลือกไฟล์ Excel Inventory (.xlsx)", type=['xlsx'])
+            if up_file and st.button("🚀 ยืนยันอัปโหลดทับข้อมูลเก่า"):
+                try:
+                    df_new = pd.read_excel(up_file)
+                    # Prepare Data
+                    df_new = df_new.fillna("")
+                    # Map Columns (ตัวอย่าง)
+                    upload_list = []
+                    for _, r in df_new.iterrows():
+                        # ปรับให้ตรงกับ Excel จริงของบอส
+                        code = str(r.get('code', r.get('Code', '')))
+                        name = str(r.get('name', r.get('Name', '')))
+                        cat = str(r.get('category', r.get('Group', '')))
+                        stk = int(pd.to_numeric(r.get('stock', r.get('Stock', 0)), errors='coerce'))
+                        unit = str(r.get('unit', r.get('Unit', 'ม้วน')))
+                        
+                        if code:
+                            upload_list.append([code, name, cat, stk, unit, "Uploaded"])
+                    
+                    # Clear & Write
+                    client = get_gsheet_client()
+                    ws = client.open(SHEET_NAME).worksheet("Inventory")
+                    ws.clear()
+                    ws.append_row(['code', 'name', 'category', 'real_stock', 'unit', 'remark'])
+                    ws.append_rows(upload_list)
+                    
+                    st.success(f"✅ อัปโหลดเสร็จสิ้น {len(upload_list)} รายการ!")
+                    time.sleep(2)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
             
 # 6. SUPPORT (เหมือนเดิม)
 def render_support():
@@ -1385,6 +1381,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

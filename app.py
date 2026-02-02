@@ -912,14 +912,12 @@ def render_saleco():
                 time.sleep(1)
                 st.rerun()
 
-# 5. WH ADMIN (ฉบับ Final Fix: แก้ประวัติหาย + เพิ่มปุ่มล้างแคชแก้ค้าง)
+# 5. WH ADMIN (ฉบับกู้ชีพ: แก้ข้อมูลไม่มา + ลดหน่วงด้วยปุ่มค้นหา)
 def render_wh():
     st.header("🏭 Warehouse Management (ผู้จัดการคลัง)")
 
-    # ---------------------------------------------------------
     # 🔴 ปุ่มกู้ชีพ: กดเมื่อข้อมูลไม่มา หรือ อยากรีเฟรชใหม่จริงๆ
-    # ---------------------------------------------------------
-    if st.button("🧹 ล้างระบบ/อัปเดตข้อมูลล่าสุด (กดเมื่อข้อมูลไม่มา)", type="primary"):
+    if st.button("🧹 ล้างระบบ/อัปเดตข้อมูลล่าสุด (กดปุ่มนี้ถ้าข้อมูลไม่มา)", type="primary"):
         st.cache_data.clear()
         st.rerun()
 
@@ -929,7 +927,7 @@ def render_wh():
     try:
         df = get_data("Inventory")
     except Exception as e:
-        st.warning(f"⚠️ กำลังเชื่อมต่อ Google Sheet... (ถ้าค้างนานให้กดปุ่ม 'ล้างระบบ' ข้างบน): {e}")
+        st.warning(f"⚠️ กำลังเชื่อมต่อ Google Sheet... (ถ้าค้างนานให้กดปุ่ม 'ล้างระบบ' สีแดงข้างบน): {e}")
         return
 
     if df.empty:
@@ -1393,6 +1391,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

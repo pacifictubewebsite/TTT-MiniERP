@@ -943,18 +943,79 @@ def render_wh():
     ])
 
     # =========================================================
-    # TAB 1: DASHBOARD
+    # TAB 1: DASHBOARD (เวอร์ชั่นอัปเกรด: ดู Top 5 ได้)
     # =========================================================
     with tab_dash:
-        st.subheader("📈 ภาพรวมคลังสินค้า")
+        st.subheader("📈 Dashboard ภาพรวม & สถิติ")
+
+        # 1. ข้อมูล Inventory (Snapshot ปัจจุบัน)
         total_items = len(df)
         total_stock = df['real_stock'].sum() if not df.empty else 0
+
+        # 2. ข้อมูล Logs (เพื่อดูการเคลื่อนไหว)
+        df_log = get_data("WH_Logs")
         
-        c1, c2 = st.columns(2)
-        c1.metric("📦 รายการสินค้า", f"{total_items:,}")
+        # ตัวแปรสำหรับสรุปยอด
+        inbound = 0
+        outbound = 0
+        top_in = pd.DataFrame()
+        top_out = pd.DataFrame()
+
+        if not df_log.empty:
+            # แปลงข้อมูลให้คำนวณได้
+            df_log['Qty'] = pd.to_numeric(df_log['Qty'], errors='coerce').fillna(0)
+            df_log['Date'] = pd.to_datetime(df_log['Date'], errors='coerce')
+
+            # กรองเฉพาะ "เดือนนี้"
+            today = datetime.date.today()
+            this_month = df_log[
+                (df_log['Date'].dt.month == today.month) &
+                (df_log['Date'].dt.year == today.year)
+            ]
+
+            # คำนวณยอดรวมเดือนนี้
+            if not this_month.empty:
+                inbound = this_month[this_month['Action'] == 'Stock In']['Qty'].sum()
+                outbound = this_month[this_month['Action'].isin(['Stock Out', 'Ship Order'])]['Qty'].sum()
+
+                # --- 🏆 คำนวณ Top 5 รับเข้า ---
+                df_in = this_month[this_month['Action'] == 'Stock In']
+                if not df_in.empty:
+                    # รวมยอดตามชื่อสินค้า -> เรียงมากไปน้อย -> ตัดมา 5 อันดับ
+                    top_in = df_in.groupby('Name')['Qty'].sum().sort_values(ascending=False).head(5)
+
+                # --- 🔥 คำนวณ Top 5 จ่ายออก ---
+                df_out = this_month[this_month['Action'].isin(['Stock Out', 'Ship Order'])]
+                if not df_out.empty:
+                    top_out = df_out.groupby('Name')['Qty'].sum().sort_values(ascending=False).head(5)
+
+        # --- ส่วนแสดงผล KPI Cards ---
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("📦 รายการสินค้า (SKU)", f"{total_items:,}")
         c2.metric("📊 สต็อกคงเหลือรวม", f"{total_stock:,.0f} ม้วน")
-        
-        if st.button("🔄 รีเฟรชข้อมูล"): st.rerun()
+        c3.metric("📥 รับเข้า (เดือนนี้)", f"{inbound:,.0f} ม้วน", delta="Inbound")
+        c4.metric("📤 จ่ายออก (เดือนนี้)", f"{outbound:,.0f} ม้วน", delta="-Outbound", delta_color="inverse")
+
+        st.divider()
+
+        # --- ส่วนแสดงผลกราฟ Top 5 ---
+        col_chart1, col_chart2 = st.columns(2)
+
+        with col_chart1:
+            st.markdown("##### 🏆 5 อันดับ รับเข้าเยอะสุด (เดือนนี้)")
+            if not top_in.empty:
+                st.bar_chart(top_in, color="#2ecc71") # สีเขียว
+            else:
+                st.info("ยังไม่มีข้อมูลรับเข้าเดือนนี้")
+
+        with col_chart2:
+            st.markdown("##### 🔥 5 อันดับ จ่ายออกเยอะสุด (เดือนนี้)")
+            if not top_out.empty:
+                st.bar_chart(top_out, color="#ff4b4b") # สีแดง
+            else:
+                st.info("ยังไม่มีข้อมูลจ่ายออกเดือนนี้")
+
+        if st.button("🔄 รีเฟรช Dashboard"): st.rerun()
 
     # =========================================================
     # TAB 2: SHIP ORDERS (ตัดของส่ง - มีระบบเช็คสต็อกก่อนตัด)
@@ -1403,6 +1464,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

@@ -1181,71 +1181,92 @@ def render_wh():
                 else: st.error("กรอกข้อมูลไม่ครบ")
 
     # =========================================================
-    # TAB 5: ประวัติ (แก้เลข 0 หายแบบถาวร)
+    # TAB 5: ประวัติ (แยกดู In/Out ได้ + ป้องกันข้อมูลหาย)
     # =========================================================
     with tab_hist:
-        st.subheader("📜 ประวัติ Log")
+        st.subheader("📜 ประวัติ Log การเคลื่อนไหว")
+        
         try:
             df_log = get_data("WH_Logs")
             
             if not df_log.empty:
+                # 1. จัดการชื่อคอลัมน์ให้ตรงกัน
                 if 'User' in df_log.columns and 'Customer' not in df_log.columns:
                     df_log = df_log.rename(columns={'User': 'Customer'})
                 
                 req_cols = ['Timestamp', 'Date', 'Action', 'Code', 'Name', 'Qty', 'Unit', 'Customer', 'WO', 'Note']
                 for c in req_cols:
-                    if c not in df_log.columns: df_log[c] = "" # เติมค่าว่าง
+                    if c not in df_log.columns: df_log[c] = ""
 
-                # 🔥 HERO FIX: บังคับให้ WO เป็น String แบบไม่มีการประนีประนอม
-                # แปลงทุกค่าเป็น String และถ้าเป็น nan ให้เป็นค่าว่าง
+                # 2. จัดการ Format (WO เป็น Text, เรียงวันที่)
                 df_log['WO'] = df_log['WO'].astype(str).replace('nan', '')
-                
-                # ถ้าใน Sheet มี '0007 (มีฝนทอง) เอาออกตอนโชว์ใน App เพื่อความสวยงาม
-                df_log['WO'] = df_log['WO'].str.replace("'", "", regex=False)
-
+                df_log['WO'] = df_log['WO'].str.replace("'", "", regex=False) # ลบฝนทองออกตอนโชว์
                 df_log = df_log.sort_values(by='Timestamp', ascending=False)
 
-                # 🔥 ใช้ TextColumn บังคับการแสดงผล
-                edited_df = st.data_editor(
-                    df_log[req_cols],
-                    column_config={
-                        "Timestamp": st.column_config.TextColumn("เวลา", disabled=True),
-                        "Code": st.column_config.TextColumn("รหัส"),
-                        "Name": st.column_config.TextColumn("ชื่อ"),
-                        "Qty": st.column_config.NumberColumn("จำนวน", min_value=0),
-                        "Customer": st.column_config.TextColumn("ลูกค้า"),
-                        "WO": st.column_config.TextColumn("WO/DO (Text)", width="medium", validate=None), # บังคับ Text
-                        "Note": st.column_config.TextColumn("หมายเหตุ", width="large"),
-                    },
-                    hide_index=True, num_rows="fixed", use_container_width=True, key="hist_fix_v2"
+                # 3. ตัวเลือกการแสดงผล (Filter)
+                filter_opt = st.radio(
+                    "เลือกมุมมอง:", 
+                    ["📂 แสดงทั้งหมด (แก้ไขได้)", "📥 เฉพาะรับเข้า (Stock In)", "📤 เฉพาะจ่ายออก (Stock Out/Ship)"],
+                    horizontal=True
                 )
 
-                if st.button("💾 บันทึกการแก้ไขประวัติ"):
-                    code_map = dict(zip(df['code'].astype(str), df['name']))
-                    edited_df['Name'] = edited_df['Code'].astype(str).map(code_map).fillna(edited_df['Name'])
+                # 4. Logic การแสดงผล
+                if filter_opt == "📂 แสดงทั้งหมด (แก้ไขได้)":
+                    # --- โหมดแก้ไขได้ (Editor) ---
+                    st.info("💡 โหมดนี้สามารถแก้ไขข้อมูลและกดบันทึกได้")
+                    edited_df = st.data_editor(
+                        df_log[req_cols],
+                        column_config={
+                            "Timestamp": st.column_config.TextColumn("เวลา", disabled=True),
+                            "Action": st.column_config.TextColumn("ประเภท", disabled=True),
+                            "Code": st.column_config.TextColumn("รหัส"),
+                            "Name": st.column_config.TextColumn("ชื่อ"),
+                            "Qty": st.column_config.NumberColumn("จำนวน", min_value=0),
+                            "Customer": st.column_config.TextColumn("ลูกค้า"),
+                            "WO": st.column_config.TextColumn("WO/DO", width="medium"),
+                            "Note": st.column_config.TextColumn("หมายเหตุ", width="large"),
+                        },
+                        hide_index=True, num_rows="fixed", use_container_width=True, key="hist_edit_main"
+                    )
+
+                    # ปุ่มบันทึก (โชว์เฉพาะตอนเลือกดูทั้งหมด เพื่อกันข้อมูลหาย)
+                    if st.button("💾 บันทึกการแก้ไข", type="primary"):
+                        # Map ชื่อสินค้าอัตโนมัติ
+                        code_map = dict(zip(df['code'].astype(str), df['name']))
+                        edited_df['Name'] = edited_df['Code'].astype(str).map(code_map).fillna(edited_df['Name'])
+                        
+                        # เติม ' นำหน้าเลข 0
+                        def preserve_zero(val):
+                            s = str(val).strip()
+                            if s.isdigit() and s.startswith("0") and len(s) > 1: return "'" + s
+                            return s
+                        edited_df['WO'] = edited_df['WO'].apply(preserve_zero)
+                        
+                        # Save
+                        data_to_write = edited_df.values.tolist()
+                        client = get_gsheet_client()
+                        wks = client.open(SHEET_NAME).worksheet("WH_Logs")
+                        wks.clear()
+                        wks.append_row(req_cols)
+                        wks.append_rows(data_to_write)
+                        st.success("✅ บันทึกเรียบร้อย!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+
+                else:
+                    # --- โหมดดูอย่างเดียว (Read Only) ---
+                    if "In" in filter_opt:
+                        df_show = df_log[df_log['Action'] == 'Stock In']
+                        st.success(f"📥 แสดงรายการรับเข้า: {len(df_show)} รายการ")
+                    else:
+                        df_show = df_log[df_log['Action'].isin(['Stock Out', 'Ship Order'])]
+                        st.error(f"📤 แสดงรายการจ่ายออก: {len(df_show)} รายการ")
                     
-                    # ตอนบันทึก ให้เติม ' นำหน้าเลข 0 เพื่อกัน Google Sheet ตัดทิ้ง
-                    def preserve_zero(val):
-                        s = str(val).strip()
-                        # ถ้าเป็นตัวเลขล้วน และขึ้นต้นด้วย 0 ให้ใส่ '
-                        if s.isdigit() and s.startswith("0") and len(s) > 1:
-                            return "'" + s
-                        return s
-                    
-                    # Apply Logic ใส่ WO
-                    edited_df['WO'] = edited_df['WO'].apply(preserve_zero)
-                    
-                    data_to_write = edited_df.values.tolist()
-                    client = get_gsheet_client()
-                    wks = client.open(SHEET_NAME).worksheet("WH_Logs")
-                    wks.clear()
-                    wks.append_row(req_cols)
-                    wks.append_rows(data_to_write)
-                    st.success("✅ บันทึกประวัติเรียบร้อย! (เลข 0 จะอยู่ครบ)"); st.cache_data.clear(); time.sleep(1); st.rerun()
+                    # โชว์แบบตารางธรรมดา (แก้ไม่ได้)
+                    st.dataframe(df_show[req_cols], hide_index=True, use_container_width=True)
+
             else:
                 st.info("ยังไม่มีประวัติ")
         except Exception as e:
-            st.error(f"⚠️ เกิดข้อผิดพลาดในการโหลดประวัติ: {e}")
+            st.error(f"⚠️ โหลดประวัติไม่สำเร็จ: {e}")
             
 # 6. SUPPORT (เหมือนเดิม)
 def render_support():
@@ -1466,6 +1487,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

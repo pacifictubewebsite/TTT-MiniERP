@@ -894,8 +894,8 @@ def render_manager():
                 else:
                     st.warning("⚠️ กรุณาเลือก 'อนุมัติ' หรือ 'ไม่อนุมัติ' อย่างน้อย 1 รายการ")
 
-# 4. SALE CO (ฉบับอัปเกรด: เพิ่มเมนูเช็คสต็อก + ระบบค้นหาแบบไม่หน่วง)
-def render_sale():
+# 4. SALE CO (แก้ชื่อฟังก์ชันให้ตรงกับเมนูหลักแล้วครับ)
+def render_saleco():
     st.header("🛒 Sales Coordinator (ฝ่ายขาย)")
 
     # 🔴 ปุ่มกู้ชีพ (เผื่อ Sales บอกข้อมูลไม่มา ให้กดปุ่มนี้)
@@ -949,34 +949,31 @@ def render_sale():
         with st.form("order_form"):
             c1, c2 = st.columns(2)
             cust_name = c1.selectbox("ลูกค้า", ["-"] + cust_list)
-            # ระบบค้นหาสินค้าสำหรับเปิดบิล (ใช้แบบกดปุ่มค้นหา เพื่อลดความหน่วง)
+            
+            # ระบบค้นหาสินค้าสำหรับเปิดบิล
             st.markdown("---")
             st.markdown("**:blue[ค้นหาสินค้าที่จะจอง]**")
             col_search1, col_search2 = st.columns([3, 1])
             search_key = col_search1.text_input("พิมพ์รหัส หรือ ชื่อสินค้า:", key="s_order_key")
-            # หมายเหตุ: ใน Form ปุ่มกดจะ submit ทีเดียว เราเลยใช้ logic ง่ายๆ แทน
             
-            # ตรงนี้ผมทำ Dropdown เลือกสินค้าให้ (ถ้าพิมพ์ค้นหาจะกรองให้)
+            # Dropdown เลือกสินค้า
             product_options = df.apply(lambda x: f"{x['code']} : {x['name']} (คงเหลือ {x['real_stock']})", axis=1).tolist()
             
-            # กรองสินค้าถ้ามีการพิมพ์ค้นหา (ทำแบบ Realtime นิดนึงตรงนี้เพื่อให้เลือกง่าย)
             if search_key:
                 filtered_opts = [x for x in product_options if search_key.lower() in x.lower()]
             else:
-                filtered_opts = product_options[:20] # โชว์แค่ 20 ตัวแรกถ้าไม่พิมพ์ (กันหน่วง)
+                filtered_opts = product_options[:20] 
 
             selected_prod_str = st.selectbox("เลือกสินค้า:", filtered_opts)
             
             c3, c4 = st.columns(2)
             qty = c3.number_input("จำนวนที่ต้องการ", min_value=1, value=1)
-            # ดึงรหัสสินค้าจาก String ที่เลือก
             sel_code = selected_prod_str.split(" : ")[0] if selected_prod_str else ""
             
             submit_ord = st.form_submit_button("✅ ยืนยันการจอง")
 
             if submit_ord:
                 if cust_name != "-" and sel_code:
-                    # Gen Order ID
                     oid = f"ORD-{int(time.time())}"
                     append_data("Orders", [oid, str(datetime.date.today()), cust_name, sel_code, qty, "Reserved"])
                     st.success(f"บันทึกออเดอร์ {oid} เรียบร้อย!")
@@ -990,7 +987,7 @@ def render_sale():
     with tab_check_stock:
         st.subheader("🔍 ค้นหาและตรวจสอบสต็อก")
         
-        # 1. กล่องค้นหา (ใช้ Form เพื่อกันหมุนติ้ว)
+        # 1. กล่องค้นหา
         with st.form("stock_search_form"):
             col_s1, col_s2 = st.columns([4, 1])
             search_query = col_s1.text_input("🔍 พิมพ์รหัส หรือ ชื่อสินค้า", placeholder="พิมพ์คำค้นหา...")
@@ -998,29 +995,27 @@ def render_sale():
         
         # 2. Logic การแสดงผล
         if search_btn and search_query:
-            # กรองข้อมูล
             mask = df['code'].astype(str).str.contains(search_query, case=False) | \
                    df['name'].astype(str).str.contains(search_query, case=False)
             df_show = df[mask]
             st.success(f"เจอ {len(df_show)} รายการ")
         else:
-            # ถ้าไม่ค้นหา โชว์ทั้งหมด (แต่ใส่ Scroll ให้ดูง่าย)
             df_show = df
             st.caption(f"แสดงรายการทั้งหมด ({len(df)} รายการ) - พิมพ์ด้านบนเพื่อค้นหาเจาะจง")
 
-        # 3. แสดงตาราง (ปรับแต่งให้ดูง่ายสำหรับ Sale)
+        # 3. แสดงตาราง
         st.dataframe(
             df_show[['code', 'name', 'real_stock', 'unit', 'remark']],
             column_config={
                 "code": "รหัสสินค้า",
                 "name": "ชื่อสินค้า",
-                "real_stock": st.column_config.NumberColumn("คงเหลือ", format="%d"), # โชว์เลขจำนวนเต็ม
+                "real_stock": st.column_config.NumberColumn("คงเหลือ", format="%d"), 
                 "unit": "หน่วย",
                 "remark": "หมายเหตุ"
             },
             hide_index=True,
             use_container_width=True,
-            height=500 # กำหนดความสูงให้เลื่อนดูได้ยาวๆ
+            height=500 
         )
 
 # 5. WH ADMIN (ฉบับ Final: แก้เลข 0 หายถาวร + Dashboard มีกราฟและตาราง)
@@ -1598,6 +1593,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

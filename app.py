@@ -894,23 +894,134 @@ def render_manager():
                 else:
                     st.warning("⚠️ กรุณาเลือก 'อนุมัติ' หรือ 'ไม่อนุมัติ' อย่างน้อย 1 รายการ")
 
-# 4. SALE-CO (เหมือนเดิม)
-def render_saleco():
-    st.header("👩‍💼 Sale-CO: Confirm Reservation")
-    st.info("ℹ️ หน้าที่: ตรวจสอบออเดอร์ และกด 'ยืนยันการจอง' เพื่อแจ้ง WH ให้เตรียมของ")
-    df = get_data("Orders")
-    if df.empty: return
-    pending = df[df['status'] == 'Pending_SaleCO']
-    if pending.empty: st.success("✅ ไม่มีรายการค้างจอง"); return
-    order_groups = pending.groupby('id')
-    for oid, items in order_groups:
-        with st.expander(f"Order: {oid} | ลูกค้า: {items.iloc[0]['customer_name']}"):
-            st.dataframe(items[['code', 'qty', 'status']])
-            if st.button("✅ ยืนยันจองของ (Confirm Reserve)", key=f"res_{oid}"):
-                run_query("update_order_status", oid=oid, status="Reserved")
-                st.success(f"จองของสำหรับออเดอร์ {oid} แล้ว! (รอ WH ตัดสต็อก)")
-                time.sleep(1)
-                st.rerun()
+# 4. SALE CO (ฉบับอัปเกรด: เพิ่มเมนูเช็คสต็อก + ระบบค้นหาแบบไม่หน่วง)
+def render_sale():
+    st.header("🛒 Sales Coordinator (ฝ่ายขาย)")
+
+    # 🔴 ปุ่มกู้ชีพ (เผื่อ Sales บอกข้อมูลไม่มา ให้กดปุ่มนี้)
+    if st.button("🔄 อัปเดตข้อมูลสต็อกล่าสุด", type="secondary"):
+        st.cache_data.clear()
+        st.rerun()
+
+    # ---------------------------------------------------------
+    # 🟢 1. โหลดข้อมูลสินค้า (Inventory)
+    # ---------------------------------------------------------
+    try:
+        df = get_data("Inventory")
+    except:
+        st.warning("⚠️ กำลังโหลดข้อมูล... (ถ้าค้างนานให้กดปุ่มอัปเดตด้านบน)")
+        return
+
+    if df.empty:
+        st.info("📭 ไม่พบข้อมูลสินค้า")
+        return
+
+    # --- Clean Data (เตรียมข้อมูลให้สวยงาม) ---
+    try:
+        df = df.drop_duplicates(subset=['code'], keep='first')
+        df = df[df['code'].astype(str).str.strip() != '']
+        df = df[~df['code'].astype(str).str.contains("รวม", na=False)]
+        df['real_stock'] = pd.to_numeric(df['real_stock'], errors='coerce').fillna(0)
+        # เติมคอลัมน์กัน Error
+        for c in ['name', 'category', 'unit', 'remark']:
+            if c not in df.columns: df[c] = ""
+    except Exception as e:
+        st.error(f"Data Error: {e}")
+        return
+
+    # ---------------------------------------------------------
+    # 🟢 2. สร้าง TABS (แยกงานเปิดบิล กับ งานดูสต็อก)
+    # ---------------------------------------------------------
+    tab_order, tab_check_stock = st.tabs(["📝 เปิดออเดอร์/จองของ", "📦 เช็คสต็อก (ดูอย่างเดียว)"])
+
+    # =========================================================
+    # TAB 1: เปิดออเดอร์ (อันเดิมของบอส)
+    # =========================================================
+    with tab_order:
+        st.subheader("สร้างรายการจองสินค้า")
+        
+        # ดึงรายชื่อลูกค้า
+        try:
+            df_cust = get_data("Customers")
+            cust_list = df_cust['Customer'].tolist() if not df_cust.empty else []
+        except: cust_list = []
+
+        with st.form("order_form"):
+            c1, c2 = st.columns(2)
+            cust_name = c1.selectbox("ลูกค้า", ["-"] + cust_list)
+            # ระบบค้นหาสินค้าสำหรับเปิดบิล (ใช้แบบกดปุ่มค้นหา เพื่อลดความหน่วง)
+            st.markdown("---")
+            st.markdown("**:blue[ค้นหาสินค้าที่จะจอง]**")
+            col_search1, col_search2 = st.columns([3, 1])
+            search_key = col_search1.text_input("พิมพ์รหัส หรือ ชื่อสินค้า:", key="s_order_key")
+            # หมายเหตุ: ใน Form ปุ่มกดจะ submit ทีเดียว เราเลยใช้ logic ง่ายๆ แทน
+            
+            # ตรงนี้ผมทำ Dropdown เลือกสินค้าให้ (ถ้าพิมพ์ค้นหาจะกรองให้)
+            product_options = df.apply(lambda x: f"{x['code']} : {x['name']} (คงเหลือ {x['real_stock']})", axis=1).tolist()
+            
+            # กรองสินค้าถ้ามีการพิมพ์ค้นหา (ทำแบบ Realtime นิดนึงตรงนี้เพื่อให้เลือกง่าย)
+            if search_key:
+                filtered_opts = [x for x in product_options if search_key.lower() in x.lower()]
+            else:
+                filtered_opts = product_options[:20] # โชว์แค่ 20 ตัวแรกถ้าไม่พิมพ์ (กันหน่วง)
+
+            selected_prod_str = st.selectbox("เลือกสินค้า:", filtered_opts)
+            
+            c3, c4 = st.columns(2)
+            qty = c3.number_input("จำนวนที่ต้องการ", min_value=1, value=1)
+            # ดึงรหัสสินค้าจาก String ที่เลือก
+            sel_code = selected_prod_str.split(" : ")[0] if selected_prod_str else ""
+            
+            submit_ord = st.form_submit_button("✅ ยืนยันการจอง")
+
+            if submit_ord:
+                if cust_name != "-" and sel_code:
+                    # Gen Order ID
+                    oid = f"ORD-{int(time.time())}"
+                    append_data("Orders", [oid, str(datetime.date.today()), cust_name, sel_code, qty, "Reserved"])
+                    st.success(f"บันทึกออเดอร์ {oid} เรียบร้อย!")
+                    time.sleep(1); st.rerun()
+                else:
+                    st.error("กรุณาเลือก ลูกค้า และ สินค้า")
+
+    # =========================================================
+    # TAB 2: เช็คสต็อก (ของใหม่! ฟีเจอร์ที่ขอมา)
+    # =========================================================
+    with tab_check_stock:
+        st.subheader("🔍 ค้นหาและตรวจสอบสต็อก")
+        
+        # 1. กล่องค้นหา (ใช้ Form เพื่อกันหมุนติ้ว)
+        with st.form("stock_search_form"):
+            col_s1, col_s2 = st.columns([4, 1])
+            search_query = col_s1.text_input("🔍 พิมพ์รหัส หรือ ชื่อสินค้า", placeholder="พิมพ์คำค้นหา...")
+            search_btn = col_s2.form_submit_button("🔎 ค้นหา")
+        
+        # 2. Logic การแสดงผล
+        if search_btn and search_query:
+            # กรองข้อมูล
+            mask = df['code'].astype(str).str.contains(search_query, case=False) | \
+                   df['name'].astype(str).str.contains(search_query, case=False)
+            df_show = df[mask]
+            st.success(f"เจอ {len(df_show)} รายการ")
+        else:
+            # ถ้าไม่ค้นหา โชว์ทั้งหมด (แต่ใส่ Scroll ให้ดูง่าย)
+            df_show = df
+            st.caption(f"แสดงรายการทั้งหมด ({len(df)} รายการ) - พิมพ์ด้านบนเพื่อค้นหาเจาะจง")
+
+        # 3. แสดงตาราง (ปรับแต่งให้ดูง่ายสำหรับ Sale)
+        st.dataframe(
+            df_show[['code', 'name', 'real_stock', 'unit', 'remark']],
+            column_config={
+                "code": "รหัสสินค้า",
+                "name": "ชื่อสินค้า",
+                "real_stock": st.column_config.NumberColumn("คงเหลือ", format="%d"), # โชว์เลขจำนวนเต็ม
+                "unit": "หน่วย",
+                "remark": "หมายเหตุ"
+            },
+            hide_index=True,
+            use_container_width=True,
+            height=500 # กำหนดความสูงให้เลื่อนดูได้ยาวๆ
+        )
 
 # 5. WH ADMIN (ฉบับ Final: แก้เลข 0 หายถาวร + Dashboard มีกราฟและตาราง)
 def render_wh():
@@ -1487,6 +1598,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

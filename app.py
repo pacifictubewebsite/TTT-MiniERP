@@ -894,85 +894,135 @@ def render_manager():
                 else:
                     st.warning("⚠️ กรุณาเลือก 'อนุมัติ' หรือ 'ไม่อนุมัติ' อย่างน้อย 1 รายการ")
 
-# 4. SALE CO (ฉบับ QMR Flow: ใส่เลข DO -> ส่งให้ WH)
+# 4. SALE CO (ฉบับสมบูรณ์: มีทั้งใส่ DO และ เช็คสต็อก)
 def render_saleco():
-    st.header("🛒 Sales Coordinator (จัดการออเดอร์)")
+    st.header("🛒 Sales Coordinator (ฝ่ายขาย & ประสานงาน)")
 
-    if st.button("🔄 รีเฟรชข้อมูล"):
+    # ปุ่มรีเฟรชรวม
+    if st.button("🔄 อัปเดตข้อมูลทั้งหมด", type="primary"):
         st.cache_data.clear()
         st.rerun()
 
-    # --- TAB: ดูรายการที่ Sale เปิดมา ---
-    st.subheader("📋 รายการรอใส่เลข DO (จากฝ่ายขาย)")
-    
-    try:
-        df_ord = get_data("Orders")
-    except:
-        st.warning("กำลังโหลดข้อมูล...")
-        return
+    # สร้าง 2 Tabs
+    tab_do, tab_stock = st.tabs(["📝 จัดการออเดอร์ (ใส่ DO)", "📦 เช็คสต็อก (ดูอย่างเดียว)"])
 
-    if df_ord.empty:
-        st.info("ไม่มีรายการ")
-        return
+    # =========================================================
+    # TAB 1: จัดการออเดอร์ (ใส่เลข DO -> ส่ง WH)
+    # =========================================================
+    with tab_do:
+        st.subheader("📋 รายการรอใส่เลข DO (จากฝ่ายขาย)")
+        
+        try:
+            df_ord = get_data("Orders")
+        except:
+            st.warning("กำลังโหลดข้อมูลออเดอร์...")
+            df_ord = pd.DataFrame()
 
-    # กรองเฉพาะสถานะ Reserved (ที่ Sale จองมา)
-    # ต้องมั่นใจว่าชื่อคอลัมน์ใน Sheet ถูกต้อง (Clean spaces)
-    df_ord.columns = df_ord.columns.str.strip()
-    
-    # ถ้ายังไม่มีคอลัมน์ DO ให้สร้างหลอกๆ ไว้ก่อนกันพัง
-    if 'DO' not in df_ord.columns: df_ord['DO'] = ""
+        # เช็คว่ามีข้อมูลไหม
+        if not df_ord.empty:
+            # Clean Data
+            df_ord.columns = df_ord.columns.str.strip()
+            if 'DO' not in df_ord.columns: df_ord['DO'] = "" # กันพัง
 
-    pending_sale = df_ord[df_ord['status'] == 'Reserved']
+            # กรองเฉพาะสถานะ Reserved
+            pending_sale = df_ord[df_ord['status'] == 'Reserved']
 
-    if not pending_sale.empty:
-        # Group ตาม Order ID (เผื่อ 1 ออเดอร์มีหลายสินค้า)
-        for oid, items in pending_sale.groupby('id'):
-            cust_name = items.iloc[0]['customer_name']
-            
-            with st.expander(f"🆕 ออเดอร์: {oid} | ลูกค้า: {cust_name}", expanded=True):
-                # โชว์รายการสินค้า
-                st.table(items[['code', 'qty']])
-                
-                # ฟอร์มสำหรับกรอก DO
-                with st.form(f"do_form_{oid}"):
-                    c1, c2 = st.columns([3, 1])
-                    # ช่องกรอก DO
-                    do_input = c1.text_input("ระบุเลขที่ DO (ใบส่งของ):", placeholder="เช่น DO-67001")
+            if not pending_sale.empty:
+                # Loop แสดงรายการ
+                for oid, items in pending_sale.groupby('id'):
+                    cust_name = items.iloc[0]['customer_name']
                     
-                    if c2.form_submit_button("ส่งให้คลัง (WH) ➡️"):
-                        if do_input:
-                            # --- Logic บันทึก DO และเปลี่ยนสถานะ ---
-                            try:
-                                client = get_gsheet_client()
-                                wks = client.open(SHEET_NAME).worksheet("Orders")
-                                
-                                # หาบรรทัดที่ต้องแก้ (Row Index)
-                                # เทคนิค: ค้นหาเซลล์ที่มีค่าเท่ากับ oid แล้วแก้ DO และ Status ในแถวนั้น
-                                cell_list = wks.findall(oid)
-                                
-                                for cell in cell_list:
-                                    row = cell.row
-                                    # สมมติลำดับคอลัมน์: ID, Date, Cust, Code, Qty, Status, DO
-                                    # บอสต้องดู Sheet จริงว่า DO อยู่คอลัมน์ไหน แต่ผมใช้การหาหัวตารางเอาชัวร์สุด
-                                    
-                                    # 1. Update DO (ใส่ ' นำหน้ากันเลข 0 หาย)
-                                    do_val = f"'{do_input}" if do_input.startswith("0") else do_input
-                                    
-                                    # หา Column Index ของ 'DO' และ 'status'
-                                    header = wks.row_values(1)
-                                    col_do = header.index("DO") + 1
-                                    col_status = header.index("status") + 1
-                                    
-                                    wks.update_cell(row, col_do, do_val)
-                                    wks.update_cell(row, col_status, "Pending_WH") # เปลี่ยนสถานะส่งต่อให้ WH
-                                
-                                st.success(f"ส่งออเดอร์ {oid} ไปคลังเรียบร้อย!"); st.cache_data.clear(); time.sleep(1); st.rerun()
-                            except Exception as e:
-                                st.error(f"เกิดข้อผิดพลาด: {e}")
-                        else:
-                            st.error("⚠️ กรุณาระบุเลข DO ก่อนส่ง")
-    else:
-        st.info("✅ ไม่มีการจองใหม่จากฝ่ายขาย")
+                    with st.expander(f"🆕 ออเดอร์: {oid} | ลูกค้า: {cust_name}", expanded=True):
+                        st.table(items[['code', 'qty']])
+                        
+                        # ฟอร์มกรอก DO
+                        with st.form(f"do_form_{oid}"):
+                            c1, c2 = st.columns([3, 1])
+                            do_input = c1.text_input("ระบุเลขที่ DO (ใบส่งของ):", placeholder="เช่น DO-67001")
+                            
+                            if c2.form_submit_button("ส่งให้คลัง (WH) ➡️"):
+                                if do_input:
+                                    try:
+                                        client = get_gsheet_client()
+                                        wks = client.open(SHEET_NAME).worksheet("Orders")
+                                        cell_list = wks.findall(oid)
+                                        
+                                        for cell in cell_list:
+                                            row = cell.row
+                                            # จัดการเลข DO (ใส่ ' กัน 0 หาย)
+                                            do_val = f"'{do_input}" if do_input.startswith("0") else do_input
+                                            
+                                            # หา Column Index
+                                            header = wks.row_values(1)
+                                            col_do = header.index("DO") + 1
+                                            col_status = header.index("status") + 1
+                                            
+                                            wks.update_cell(row, col_do, do_val)
+                                            wks.update_cell(row, col_status, "Pending_WH")
+                                        
+                                        st.success(f"ส่งออเดอร์ {oid} ไปคลังเรียบร้อย!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Error: {e}")
+                                else:
+                                    st.error("⚠️ กรุณาระบุเลข DO ก่อนส่ง")
+            else:
+                st.info("✅ ไม่มีการจองใหม่จากฝ่ายขาย")
+        else:
+            st.info("ยังไม่มีข้อมูลออเดอร์")
+
+    # =========================================================
+    # TAB 2: เช็คสต็อก (ฟีเจอร์ค้นหา แบบไม่หน่วง)
+    # =========================================================
+    with tab_stock:
+        st.subheader("🔍 ค้นหาและตรวจสอบสต็อก")
+
+        try:
+            df_inv = get_data("Inventory")
+        except:
+            st.warning("กำลังโหลดข้อมูลสินค้า...")
+            df_inv = pd.DataFrame()
+
+        if not df_inv.empty:
+            # Clean Data
+            try:
+                df_inv = df_inv.drop_duplicates(subset=['code'], keep='first')
+                df_inv = df_inv[df_inv['code'].astype(str).str.strip() != '']
+                df_inv = df_inv[~df_inv['code'].astype(str).str.contains("รวม", na=False)]
+                df_inv['real_stock'] = pd.to_numeric(df_inv['real_stock'], errors='coerce').fillna(0)
+            except: pass
+
+            # 1. กล่องค้นหา
+            with st.form("stock_search_form_saleco"):
+                col_s1, col_s2 = st.columns([4, 1])
+                search_query = col_s1.text_input("🔍 พิมพ์รหัส หรือ ชื่อสินค้า", placeholder="พิมพ์คำค้นหา...")
+                search_btn = col_s2.form_submit_button("🔎 ค้นหา")
+            
+            # 2. Logic กรองข้อมูล
+            if search_btn and search_query:
+                mask = df_inv['code'].astype(str).str.contains(search_query, case=False) | \
+                       df_inv['name'].astype(str).str.contains(search_query, case=False)
+                df_show = df_inv[mask]
+                st.success(f"เจอ {len(df_show)} รายการ")
+            else:
+                df_show = df_inv
+                st.caption(f"แสดงรายการทั้งหมด ({len(df_inv)} รายการ)")
+
+            # 3. แสดงตาราง (Read Only)
+            st.dataframe(
+                df_show[['code', 'name', 'real_stock', 'unit', 'remark']],
+                column_config={
+                    "code": "รหัสสินค้า",
+                    "name": "ชื่อสินค้า",
+                    "real_stock": st.column_config.NumberColumn("คงเหลือ", format="%d"),
+                    "unit": "หน่วย",
+                    "remark": "หมายเหตุ"
+                },
+                hide_index=True,
+                use_container_width=True,
+                height=500
+            )
+        else:
+            st.error("ไม่พบข้อมูลสินค้า")
 
 # 5. WH ADMIN (ฉบับ Final: แก้เลข 0 หายถาวร + Dashboard มีกราฟและตาราง)
 def render_wh():
@@ -1577,6 +1627,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 

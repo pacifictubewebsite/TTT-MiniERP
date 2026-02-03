@@ -1106,41 +1106,69 @@ def render_wh():
         except Exception as e:
             st.error(f"โหลดข้อมูลไม่สำเร็จ: {e}")
 
-    # =========================================================
-    # TAB 2: SHIP ORDERS
+   # =========================================================
+    # TAB 2: SHIP ORDERS (ตัดของส่งตาม DO ที่ Sale Co ส่งมา)
     # =========================================================
     with tab_ship:
-        st.subheader("🚚 รายการรอตัดสต็อก")
+        st.subheader("🚚 รายการรอตัดสต็อก (มีเลข DO แล้ว)")
         try:
             df_ord = get_data("Orders")
             has_job = False
-            if not df_ord.empty and 'status' in df_ord.columns:
-                target = ['Reserved', 'Pending_SaleCO', 'Pending_Manager']
-                pending = df_ord[df_ord['status'].isin(target)]
+            
+            if not df_ord.empty:
+                df_ord.columns = df_ord.columns.str.strip()
+                
+                # กรองสถานะ Pending_WH (ที่ Sale Co ส่งมา)
+                pending = df_ord[df_ord['status'] == 'Pending_WH']
                 
                 if not pending.empty:
                     has_job = True
                     for oid, items in pending.groupby('id'):
-                        c_name = items.iloc[0]['customer_name'] if 'customer_name' in items.columns else "-"
-                        with st.expander(f"📦 {oid} | {c_name}"):
-                            st.dataframe(items[['code', 'qty']], use_container_width=True)
-                            c1, c2 = st.columns(2)
-                            if c1.button("✂️ ตัดสต็อก", key=f"s_{oid}", type="primary"):
-                                for _, r in items.iterrows():
-                                    s_row = df[df['code'].astype(str) == str(r['code'])]
-                                    if not s_row.empty:
-                                        curr = s_row['real_stock'].values[0]
-                                        run_query("update_stock", code=str(r['code']), new_stock=int(curr)-int(r['qty']))
-                                        append_data("WH_Logs", [str(datetime.datetime.now()), str(datetime.date.today()), "Ship Order", str(r['code']), s_row['name'].values[0], r['qty'], s_row['unit'].values[0], c_name, oid, "System Cut"])
-                                run_query("update_order_status", oid=oid, status="Completed")
-                                st.success("Success!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+                        c_name = items.iloc[0]['customer_name']
+                        # ดึงเลข DO มาโชว์ (ถ้าไม่มีให้เป็น -)
+                        do_no = items.iloc[0]['DO'] if 'DO' in items.columns else "-"
+                        
+                        with st.expander(f"📦 DO: {do_no} | ลูกค้า: {c_name} (Order: {oid})", expanded=True):
+                            st.table(items[['code', 'qty']])
                             
-                            if c2.button("เคลียร์สถานะ", key=f"c_{oid}"):
-                                run_query("update_order_status", oid=oid, status="Completed")
-                                st.cache_data.clear(); st.rerun()
-                else: st.success("✅ ไม่มีงานค้าง")
-            if not has_job: st.info("ว่าง")
-        except: st.error("โหลด Order ไม่ได้")
+                            # ฟอร์มสำหรับ WH ตัดของ
+                            with st.form(f"wh_ship_{oid}"):
+                                st.info(f"📍 เลขที่ DO: {do_no}")
+                                remark = st.text_input("หมายเหตุ (ถ้ามี):", placeholder="เช่น กล่องบุบ, ส่งด่วน")
+                                
+                                if st.form_submit_button("✂️ ตัดสต็อก (ยืนยัน)"):
+                                    # Loop ตัดสต็อกทีละรายการ
+                                    for _, r in items.iterrows():
+                                        s_row = df[df['code'].astype(str) == str(r['code'])]
+                                        if not s_row.empty:
+                                            curr = s_row['real_stock'].values[0]
+                                            # 1. Update Stock
+                                            run_query("update_stock", code=str(r['code']), new_stock=int(curr)-int(r['qty']))
+                                            
+                                            # 2. Save Log (ใช้ DO จาก Sale Co และ Note จาก WH)
+                                            # จัดการ DO ให้มี ' นำหน้าถ้าเป็นเลข 0
+                                            final_do = f"'{do_no}" if str(do_no).startswith("0") else do_no
+                                            
+                                            append_data("WH_Logs", [
+                                                str(datetime.datetime.now()), 
+                                                str(datetime.date.today()), 
+                                                "Ship Order",       # Action
+                                                str(r['code']), 
+                                                s_row['name'].values[0], 
+                                                r['qty'], 
+                                                s_row['unit'].values[0], 
+                                                c_name, 
+                                                final_do,           # DO จาก Sale Co
+                                                remark              # Note จาก WH
+                                            ])
+                                    
+                                    # 3. จบงาน (เปลี่ยนสถานะเป็น Completed)
+                                    run_query("update_order_status", oid=oid, status="Completed")
+                                    st.success("ตัดสต็อกเรียบร้อย!"); st.cache_data.clear(); time.sleep(1); st.rerun()
+
+                else: st.success("✅ ไม่มีรายการค้าง (เคลียร์หมดแล้ว)")
+            if not has_job: st.info("ว่าง (รอ Sale Co ส่งงาน)")
+        except Exception as e: st.error(f"โหลดข้อมูลไม่ได้: {e}")
 
     # =========================================================
     # TAB 3: ปรับยอด
@@ -1549,6 +1577,7 @@ if check_password():
     # 🟢 เพิ่มทางเดินใหม่
     elif "8." in selected: render_dashboard()
     elif "9." in selected: render_cancel()
+
 
 
 
